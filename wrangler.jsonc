@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "squad-organiser",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": { "directory": "public" },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "squad-organiser",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "APP_NAME": "Tactics and Theatrics",
+    "EMAIL_FROM": "Tactics and Theatrics <squads@torquemada.uk>",
+    // "resend" sends real email (needs the RESEND_API_KEY secret).
+    // "dev" writes emails to the dev_outbox table instead; set it in .dev.vars for local work.
+    "EMAIL_MODE": "resend"
+  }
+  // Secrets (wrangler secret put ...):
+  //   RESEND_API_KEY  API key for https://resend.com
+  //   ADMIN_EMAILS    comma-separated emails with admin rights; the first is the initial captain
+}

@@ -1,0 +1,17 @@
+{
+  "name": "squad-organiser",
+  "private": true,
+  "description": "Tactics and Theatrics tournament sign-ups and squad drafting",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler d1 migrations apply squad-organiser --local && wrangler dev",
+    "typecheck": "tsc -p .",
+    "test": "node --test test/*.test.mjs",
+    "deploy": "wrangler d1 migrations apply squad-organiser --remote && wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260925.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.140.0"
+  }
+}

@@ -1,0 +1,167 @@
+:root {
+  --ink: #000;
+  --paper: #fff;
+  --muted: #666;
+  --rule: #000;
+  --faint: #e6e6e6;
+  --font: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--paper); color: var(--ink); }
+
+body {
+  margin: 0;
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+a { color: inherit; }
+
+main {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 32px 16px 80px;
+}
+
+/* Header */
+.top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  padding: 14px 16px;
+  border-bottom: 2px solid var(--rule);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-size: 14px;
+}
+.brand img { display: block; height: 41px; width: auto; }
+.top nav { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 20px; font-size: 14px; }
+.top nav a { text-decoration: none; padding: 2px 0; border-bottom: 2px solid transparent; }
+.top nav a:hover, .top nav a.active { border-bottom-color: var(--ink); }
+
+/* Type */
+h1 { font-size: 32px; line-height: 1.15; margin: 0 0 8px; letter-spacing: -0.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.12em; margin: 40px 0 12px; }
+h3 { font-size: 18px; margin: 0 0 4px; }
+p { margin: 0 0 16px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.lede { font-size: 18px; margin-bottom: 32px; }
+
+/* Blocks */
+.card {
+  border: 2px solid var(--ink);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.card.link { display: block; text-decoration: none; }
+.card.link:hover { background: var(--ink); color: var(--paper); }
+.card.link:hover .muted { color: #bbb; }
+.meta { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+
+.notice { border-left: 4px solid var(--ink); padding: 8px 14px; margin: 0 0 24px; background: #f4f4f4; }
+.notice.error { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+/* Forms */
+form.stack { display: grid; gap: 20px; max-width: 560px; }
+label { display: block; font-weight: 700; font-size: 14px; margin-bottom: 6px; }
+label .req { font-weight: 400; color: var(--muted); }
+.help { font-size: 13px; color: var(--muted); margin: -2px 0 8px; }
+input[type=text], input[type=email], textarea, select {
+  width: 100%;
+  font: inherit;
+  padding: 10px 12px;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: var(--paper);
+  color: var(--ink);
+}
+textarea { min-height: 88px; resize: vertical; }
+input:focus, textarea:focus, select:focus, button:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
+.check { display: flex; gap: 10px; align-items: center; font-weight: 400; }
+fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 20px; }
+legend { font-size: 13px; text-transform: uppercase; letter-spacing: 0.12em; font-weight: 700; margin-bottom: 12px; padding: 0; }
+
+button, .button {
+  display: inline-block;
+  font: inherit;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 10px 18px;
+  border: 2px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+  text-decoration: none;
+  border-radius: 0;
+}
+button:hover, .button:hover { background: var(--paper); color: var(--ink); }
+button.ghost, .button.ghost { background: var(--paper); color: var(--ink); }
+button.ghost:hover, .button.ghost:hover { background: var(--ink); color: var(--paper); }
+button.small { padding: 4px 10px; font-size: 12px; }
+button.link {
+  background: none; border: 0; padding: 2px 0; color: inherit; font: inherit;
+  text-transform: none; letter-spacing: 0; font-weight: 400; cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+button.link:hover { background: none; color: inherit; border-bottom-color: var(--ink); }
+form.inline { display: inline; margin: 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+
+/* Tables and rosters */
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; border-bottom: 2px solid var(--ink); padding: 6px 8px 6px 0; }
+td { border-bottom: 1px solid var(--faint); padding: 10px 8px 10px 0; vertical-align: top; }
+td.num, th.num { text-align: right; }
+.table-wrap { overflow-x: auto; }
+
+.squads { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+.squad h3 { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.squad ol { margin: 12px 0 0; padding-left: 22px; }
+.squad li { padding: 4px 0; border-bottom: 1px solid var(--faint); display: flex; justify-content: space-between; gap: 8px; }
+.squad li::marker { font-weight: 700; }
+.squad.mine { background: var(--ink); color: var(--paper); }
+.squad.mine .muted { color: #bbb; }
+.squad.mine li { border-color: #333; }
+.squad.mine button.small { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+.tag { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; border: 1px solid currentColor; padding: 0 6px; }
+
+.count { font-variant-numeric: tabular-nums; }
+.pre { white-space: pre-wrap; }
+
+@media (max-width: 560px) {
+  h1 { font-size: 26px; }
+  .brand span { display: none; }
+  .card { padding: 16px; }
+}
+
+/* Pool table becomes stacked cards on phones so the Draft button stays in reach. */
+@media (max-width: 640px) {
+  table.pool thead { display: none; }
+  table.pool, table.pool tbody, table.pool tr, table.pool td { display: block; width: 100%; }
+  table.pool tr { border: 2px solid var(--ink); padding: 12px 14px; margin-bottom: 12px; }
+  table.pool td { border: 0; padding: 3px 0; }
+  table.pool td[data-label]:not([data-label="Name"])::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+  }
+  table.pool td.row-actions { padding-top: 10px; }
+}
