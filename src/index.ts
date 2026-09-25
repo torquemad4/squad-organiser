@@ -51,6 +51,7 @@ const MESSAGES: Record<string, string> = {
   released: "Returned to the pool.",
   nominated: "New captain nominated. Their squad is ready to draft.",
   "nominate-not-yet": "There aren't enough people in the pool for another squad yet.",
+  "nominate-max": "This tournament already has all its squads.",
   "nominate-failed": "That person can't be nominated (already a captain, or no longer signed up).",
   renamed: "Squad renamed.",
   "squad-removed": "Squad removed; its players are back in the pool.",
@@ -133,7 +134,7 @@ function flash(c: Ctx): Html | null {
   const key = c.url.searchParams.get("msg");
   const text = key ? MESSAGES[key] : null;
   if (!text) return null;
-  const error = /failed|cannot|not-yet|invalid/.test(key!);
+  const error = /failed|cannot|not-yet|invalid|max/.test(key!);
   return html`<p class="notice ${error ? "error" : ""}" role="status">${text}</p>`;
 }
 
@@ -631,8 +632,13 @@ async function draftIndex(c: Ctx): Promise<Response> {
   );
 }
 
-function canNominate(activeCount: number, squadCount: number, size: number): boolean {
-  return squadCount === 0 || activeCount > squadCount * size;
+function atMaxSquads(t: Tournament, squadCount: number): boolean {
+  return t.max_squads !== null && squadCount >= t.max_squads;
+}
+
+function canNominate(t: Tournament, activeCount: number, squadCount: number): boolean {
+  if (atMaxSquads(t, squadCount)) return false;
+  return squadCount === 0 || activeCount > squadCount * t.squad_size;
 }
 
 async function draftPage(c: Ctx, t: Tournament): Promise<Response> {
@@ -652,7 +658,8 @@ async function draftPage(c: Ctx, t: Tournament): Promise<Response> {
     return members.length + (members.some((e) => e.user_id === s.captain_user_id) ? 0 : 1);
   };
   const myRoom = mySquad ? t.squad_size - seatsUsed(mySquad) : 0;
-  const nominate = canNominate(active.length, squads.length, t.squad_size);
+  const nominate = canNominate(t, active.length, squads.length);
+  const full = atMaxSquads(t, squads.length);
 
   const squadCard = (s: Squad) => {
     const mine = s.id === mySquad?.id;
@@ -697,7 +704,7 @@ async function draftPage(c: Ctx, t: Tournament): Promise<Response> {
     <div class="squads">${[...squads].sort((a, b) => Number(b.id === mySquad?.id) - Number(a.id === mySquad?.id)).map(squadCard)}</div>
 
     <h2>Pool</h2>
-    ${nominate
+    ${nominate || full
       ? null
       : html`<p class="muted small">Another captain can be nominated once more than ${squads.length * t.squad_size} people have signed up.</p>`}
     ${pool.length === 0
@@ -764,7 +771,8 @@ async function draftAction(c: Ctx, t: Tournament, action: string): Promise<Respo
     case "nominate": {
       const [squads, entries] = await Promise.all([listSquads(c.env, t.id), listEntries(c.env, t.id)]);
       const active = entries.filter((e) => e.status === "active");
-      if (!canNominate(active.length, squads.length, t.squad_size)) return back("nominate-not-yet");
+      if (atMaxSquads(t, squads.length)) return back("nominate-max");
+      if (!canNominate(t, active.length, squads.length)) return back("nominate-not-yet");
       const nominee = active.find((e) => e.application_id === appId);
       if (!nominee || squads.some((s) => s.captain_user_id === nominee.user_id)) return back("nominate-failed");
       await c.env.DB.batch([

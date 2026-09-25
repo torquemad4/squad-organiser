@@ -50,6 +50,8 @@ export interface Tournament {
   extra_fields: string;
   ticket_price_cents: number | null;
   ticket_includes: string | null;
+  /** Most squads allowed; null means no limit. */
+  max_squads: number | null;
   status: "open" | "closed";
 }
 
@@ -85,7 +87,7 @@ export function extraFields(t: Tournament): ExtraField[] {
 }
 
 /** Tactics and Theatrics squads are X, then O, unless the captain renames them. */
-const DEFAULT_SQUAD_NAMES = ["X", "O"];
+const DEFAULT_SQUAD_NAMES = ["Tactics & Theatrics X", "Tactics & Theatrics O"];
 
 export function squadName(s: Pick<Squad, "name" | "position">): string {
   return s.name?.trim() || DEFAULT_SQUAD_NAMES[s.position - 1] || `Squad ${s.position}`;

@@ -106,7 +106,7 @@ test("full sign-up and draft flow", async () => {
   // The first admin signs up and becomes captain of squad 1 automatically.
   const karl = await signUp(ADMIN, "Karl");
   let draft = await (await get(`/t/${SLUG}/draft`, karl)).text();
-  assert.match(draft, /<span>X<\/span>/);
+  assert.match(draft, /<span>Tactics &amp; Theatrics X<\/span>/);
   assert.match(draft, /1\/6/);
 
   // Links are single use.
@@ -147,7 +147,11 @@ test("full sign-up and draft flow", async () => {
   const p6Draft = await get(`/t/${SLUG}/draft`, p6);
   assert.equal(p6Draft.status, 200);
   const p6Html = await p6Draft.text();
-  assert.match(p6Html, /<span>O<\/span>/);
+  assert.match(p6Html, /<span>Tactics &amp; Theatrics O<\/span>/);
+  // The World Cup has at most two squads: no more nominations.
+  assert.doesNotMatch(p6Html, /Make captain/);
+  const third = await post(`/t/${SLUG}/draft/nominate`, { application_id: pool[4] }, karl);
+  assert.match(third.headers.get("location"), /nominate-max/);
   assert.match(p6Html, /href="\/draft"/, "captains get the Draft tab");
 
   // A drafted player can't be stolen by another captain.
@@ -178,7 +182,7 @@ test("full sign-up and draft flow", async () => {
   assert.match(csv, /^Squad,Captain,Name,Email,NAF name,NAF number,Extras,Dietary restrictions,Ticket,Extras total,Total,Paid,Status,Signed up/);
   assert.match(csv, /Tournament Coin, World Cup 2027 Neoprene Pitch",Peanuts,195\.00,55\.00,250\.00,/);
   assert.match(csv, /Peanuts/);
-  assert.match(csv, /\nO,yes,Player 6/);
+  assert.match(csv, /\nTactics & Theatrics O,yes,Player 6/);
   assert.equal((await get(`/t/${SLUG}/export.csv`, people["p3@example.com"])).status, 403);
 });
 
@@ -264,8 +268,8 @@ test("members see who's signed up and their squad, without private details", asy
 
   const html = await (await get(`/t/${SLUG}`, people["p4@example.com"])).text();
   assert.match(html, /Who's signed up \(\d+\)/);
-  assert.match(html, /<span class="squad-mark">X<\/span>/);
-  assert.match(html, /<span class="squad-mark">O<\/span>/);
+  assert.match(html, /<span class="squad-mark">Tactics &amp; Theatrics X<\/span>/);
+  assert.match(html, /<span class="squad-mark">Tactics &amp; Theatrics O<\/span>/);
   assert.match(html, /Player 6 <span class="tag">C<\/span>/);
   assert.match(html, /Player Three/);
   assert.doesNotMatch(html, /p3@example\.com|Gluten|Peanuts/);
