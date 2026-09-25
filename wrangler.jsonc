@@ -4,22 +4,26 @@
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
   "assets": { "directory": "public" },
+  "routes": [{ "pattern": "squads.torquemada.uk", "custom_domain": true }],
+  "observability": { "enabled": true },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "squad-organiser",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "1d5f75c8-5200-40ec-a9c1-96253ecc916c",
       "migrations_dir": "migrations"
     }
   ],
   "vars": {
     "APP_NAME": "Tactics and Theatrics",
-    "EMAIL_FROM": "Tactics and Theatrics <squads@torquemada.uk>",
-    // "resend" sends real email (needs the RESEND_API_KEY secret).
+    "SMTP_HOST": "smtp.purelymail.com",
+    "SMTP_PORT": "465",
+    "SMTP_USER": "squads@purelymail.com",
+    // "smtp" sends real email through Purelymail (needs the SMTP_PASS secret).
     // "dev" writes emails to the dev_outbox table instead; set it in .dev.vars for local work.
-    "EMAIL_MODE": "resend"
+    "EMAIL_MODE": "smtp"
   }
   // Secrets (wrangler secret put ...):
-  //   RESEND_API_KEY  API key for https://resend.com
+  //   SMTP_PASS       password for SMTP_USER
   //   ADMIN_EMAILS    comma-separated emails with admin rights; the first is the initial captain
 }

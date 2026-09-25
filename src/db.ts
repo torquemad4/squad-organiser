@@ -2,9 +2,11 @@ export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   APP_NAME: string;
-  EMAIL_FROM: string;
-  EMAIL_MODE: "resend" | "dev";
-  RESEND_API_KEY?: string;
+  EMAIL_MODE: "smtp" | "dev";
+  SMTP_HOST: string;
+  SMTP_PORT: string;
+  SMTP_USER: string;
+  SMTP_PASS?: string;
   ADMIN_EMAILS?: string;
 }
 

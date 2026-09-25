@@ -708,6 +708,7 @@ async function draftAction(c: Ctx, t: Tournament, action: string): Promise<Respo
            SELECT ?, id, ? FROM squads WHERE tournament_id = ? AND captain_user_id = ?`,
         ).bind(appId, c.user!.id, t.id, nominee.user_id),
       ]);
+      // The nomination already happened; a failed notification shouldn't undo it.
       await sendEmail(c.env, {
         to: nominee.email,
         subject: `You're a captain for ${t.name}`,
@@ -716,7 +717,7 @@ async function draftAction(c: Ctx, t: Tournament, action: string): Promise<Respo
 You've been made captain of a new squad for ${t.name}. Sign in and open the Draft tab to pick your squad:
 
 ${c.url.origin}/t/${t.slug}/draft`,
-      });
+      }).catch((err) => console.error("nomination email failed", err));
       return back("nominated");
     }
     case "rename": {

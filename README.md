@@ -2,7 +2,9 @@
 
 A sign-up portal where Tactics and Theatrics members sign up for team tournaments, and captains draft squads from the pool.
 
-It runs as a Cloudflare Worker with a D1 database. Sign-in works by email link (no passwords), and emails are sent through [Resend](https://resend.com).
+It runs as a Cloudflare Worker with a D1 database. Sign-in works by email link (no passwords), and emails are sent over SMTP from `squads@purelymail.com` via Purelymail.
+
+Live at https://squads.torquemada.uk.
 
 ## How it works
 
@@ -35,10 +37,13 @@ npm test        # starts wrangler dev against a throwaway database and runs the 
 
 ## Deploying
 
-1. `npx wrangler login`
-2. `npx wrangler d1 create squad-organiser`, then copy the `database_id` it prints into `wrangler.jsonc`.
-3. Set up a Resend account, verify the sending domain, and set `EMAIL_FROM` in `wrangler.jsonc` to an address on that domain.
-4. `npx wrangler secret put RESEND_API_KEY`
-5. `npx wrangler secret put ADMIN_EMAILS`: comma-separated, with the first captain listed first.
-6. `npm run deploy`: this applies the migrations and deploys.
-7. Optional: add a custom domain to the Worker in the Cloudflare dashboard.
+The database (`squad-organiser`, Western Europe) and the `squads.torquemada.uk` custom domain are already set up; `wrangler.jsonc` holds the database ID.
+
+Two secrets need to be set once:
+
+```sh
+npx wrangler secret put SMTP_PASS      # password for squads@purelymail.com
+npx wrangler secret put ADMIN_EMAILS   # comma-separated, with the first captain listed first
+```
+
+After that, `npm run deploy` applies any new migrations and deploys.
