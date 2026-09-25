@@ -201,9 +201,8 @@ div.item.fixed input { width: 18px; height: 18px; margin: 0; accent-color: var(-
 .squad-mark { font-size: 28px; line-height: 1; font-weight: 800; }
 .item .price { font-variant-numeric: tabular-nums; font-weight: 700; }
 
-/* Top bar: white on black. The logo is inverted so the mask reads as white lines on black. */
+/* Top bar: white on black. The logo keeps its black outline and white fill. */
 .top { background: var(--ink); color: var(--paper); border-bottom-color: var(--ink); }
-.top .brand img { filter: invert(1); }
 .top nav a:hover, .top nav a.active, .top button.link:hover { border-bottom-color: var(--paper); }
 .top button.link { color: var(--paper); }
 .top a:focus-visible, .top button:focus-visible { outline-color: var(--paper); }
