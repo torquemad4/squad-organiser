@@ -1,6 +1,6 @@
 // Priced tick-list extras: totals, formatting and descriptions.
 
-import type { ExtraField, PricedItem } from "./db";
+import type { ExtraField, PricedItem, Tournament } from "./db";
 
 export function formatMoney(cents: number, currency = "EUR"): string {
   return new Intl.NumberFormat("en-GB", {
@@ -35,4 +35,14 @@ export function describeExtra(field: ExtraField, value: string | undefined): str
   if (field.type === "items") return selectedItems(field, value).map((i) => i.label).join(", ");
   if (field.type === "checkbox") return value ? "Yes" : "";
   return value ?? "";
+}
+
+/** What one coach owes: the ticket plus their ticked extras. */
+export function personTotal(t: Pick<Tournament, "ticket_price_cents">, fields: ExtraField[], extras: Record<string, string>): number {
+  return (t.ticket_price_cents ?? 0) + extrasTotal(fields, extras);
+}
+
+/** Whether this tournament has anything to pay for. */
+export function hasCharges(t: Pick<Tournament, "ticket_price_cents">, fields: ExtraField[]): boolean {
+  return t.ticket_price_cents !== null || hasPricedItems(fields);
 }

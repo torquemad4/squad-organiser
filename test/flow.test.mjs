@@ -99,14 +99,14 @@ test("validation: required fields and allergens", async () => {
   const html = await res.text();
   assert.match(html, /Enter a valid email address/);
   assert.match(html, /Enter your NAF number/);
-  assert.match(html, /Please fill in allergens/);
+  assert.match(html, /Please fill in dietary restrictions/);
 });
 
 test("full sign-up and draft flow", async () => {
   // The first admin signs up and becomes captain of squad 1 automatically.
   const karl = await signUp(ADMIN, "Karl");
   let draft = await (await get(`/t/${SLUG}/draft`, karl)).text();
-  assert.match(draft, /Squad 1/);
+  assert.match(draft, /<span>X<\/span>/);
   assert.match(draft, /1\/6/);
 
   // Links are single use.
@@ -147,7 +147,7 @@ test("full sign-up and draft flow", async () => {
   const p6Draft = await get(`/t/${SLUG}/draft`, p6);
   assert.equal(p6Draft.status, 200);
   const p6Html = await p6Draft.text();
-  assert.match(p6Html, /Squad 2/);
+  assert.match(p6Html, /<span>O<\/span>/);
   assert.match(p6Html, /href="\/draft"/, "captains get the Draft tab");
 
   // A drafted player can't be stolen by another captain.
@@ -175,10 +175,10 @@ test("full sign-up and draft flow", async () => {
 
   // CSV export includes squads and extras.
   const csv = await (await get(`/t/${SLUG}/export.csv`, karl)).text();
-  assert.match(csv, /^Squad,Captain,Name,Email,NAF name,NAF number,Extras,Allergens,Extras total,Paid,Status,Signed up/);
-  assert.match(csv, /Tournament Coin, World Cup 2027 Neoprene Pitch",Peanuts,55\.00,/);
+  assert.match(csv, /^Squad,Captain,Name,Email,NAF name,NAF number,Extras,Dietary restrictions,Ticket,Extras total,Total,Paid,Status,Signed up/);
+  assert.match(csv, /Tournament Coin, World Cup 2027 Neoprene Pitch",Peanuts,195\.00,55\.00,250\.00,/);
   assert.match(csv, /Peanuts/);
-  assert.match(csv, /Squad 2,yes,Player 6/);
+  assert.match(csv, /\nO,yes,Player 6/);
   assert.equal((await get(`/t/${SLUG}/export.csv`, people["p3@example.com"])).status, 403);
 });
 
@@ -202,27 +202,35 @@ test("login rate limit", async () => {
   assert.match(await res.text(), /Too many links/);
 });
 
-test("extras tick-list: totals, admin page and paid tick box", async () => {
+test("extras tick-list: ticket + extras totals, admin page and paid tick box", async () => {
   const p1 = people["p1@example.com"];
-  // Player 1 ticked coin (€15) + pitch (€40) when signing up.
+  const euros = (html, label) => Number(html.match(new RegExp(label + `</div><div class="stat">€([\\d,]+)<`))[1].replace(/,/g, ""));
+  // Player 1 ticked coin (€15) + pitch (€40); with the €195 ticket that's €250.
   const own = await (await get(`/t/${SLUG}`, p1)).text();
-  assert.match(own, /Your extras come to <strong>€55<\/strong>/);
+  assert.match(own, /Your total is <strong>€250<\/strong>/);
+  assert.match(own, /data-base="19500"/);
+  assert.match(own, /<span>Ticket<span class="small muted"><br>Event entry, lunch/);
+  assert.match(own, /href="https:\/\/nafwc\.com\/tickets\/" target="_blank"/);
   assert.match(own, /value="coin" data-price="1500"\s+checked/);
   assert.match(own, /Pack of Legends<\/span><span class="price">€175/);
-  assert.match(await (await get("/me", p1)).text(), /Extras: <strong>€55<\/strong>[^]*not paid yet/);
+  assert.match(own, /<label for="f_x_allergens">Dietary restrictions/);
+  assert.match(await (await get("/me", p1)).text(), /Your total: <strong>€250<\/strong>[^]*not paid yet/);
 
   // Unknown item keys are ignored.
   await post(`/t/${SLUG}/apply`, [["name", "Player 1"], ["naf_name", "P1"], ["naf_number", "1"], ["x_allergens", "Peanuts"],
     ["x_extras", "coin"], ["x_extras", "pitch"], ["x_extras", "free_beer"]], p1);
-  assert.match(await (await get(`/t/${SLUG}`, p1)).text(), /come to <strong>€55</);
+  assert.match(await (await get(`/t/${SLUG}`, p1)).text(), /Your total is <strong>€250</);
 
   // Only admins see the admin page.
   assert.equal((await get(`/t/${SLUG}/admin`, p1)).status, 403);
   const karl = people[ADMIN];
   let admin = await (await get(`/t/${SLUG}/admin`, karl)).text();
+  const signedUp = Number(admin.match(/Sign-ups \((\d+)\)/)[1]);
+  const owed = signedUp * 195 + 55;
   assert.match(admin, /href="\/admin"/, "admins get the Admin tab");
-  assert.match(admin, /Extras ordered<\/div><div class="stat">€55</);
-  assert.match(admin, /Outstanding<\/div><div class="stat">€55</);
+  assert.equal(euros(admin, "Owed in total"), owed);
+  assert.equal(euros(admin, "Outstanding"), owed);
+  assert.match(admin, new RegExp(`<td><strong>Tickets</strong></td><td class="num">${signedUp}</td>`));
   assert.match(admin, /<td>Tournament Coin<\/td><td class="num">1<\/td>/);
 
   // Mark Player 1 paid.
@@ -230,21 +238,35 @@ test("extras tick-list: totals, admin page and paid tick box", async () => {
   const r = await post(`/t/${SLUG}/admin/paid`, [["application_id", appId], ["paid", "0"], ["paid", "1"]], karl);
   assert.match(r.headers.get("location"), /paid-updated/);
   admin = await (await get(`/t/${SLUG}/admin`, karl)).text();
-  assert.match(admin, /Paid<\/div><div class="stat">€55</);
-  assert.match(admin, /Outstanding<\/div><div class="stat">€0</);
+  assert.equal(euros(admin, "Paid"), 250);
+  assert.equal(euros(admin, "Outstanding"), owed - 250);
   assert.match(await (await get("/me", p1)).text(), /<span class="tag">Paid<\/span>/);
 
   // Player 1 adds Pack of Legends after paying: admin sees the difference.
   await post(`/t/${SLUG}/apply`, [["name", "Player 1"], ["naf_name", "P1"], ["naf_number", "1"], ["x_allergens", "Peanuts"],
     ["x_extras", "coin"], ["x_extras", "pitch"], ["x_extras", "pack_of_legends"]], p1);
   admin = await (await get(`/t/${SLUG}/admin`, karl)).text();
-  assert.match(admin, /Paid €55; total is now €230/);
-  assert.match(admin, /Outstanding<\/div><div class="stat">€175</);
+  assert.match(admin, /Paid €250; total is now €425/);
+  assert.equal(euros(admin, "Outstanding"), owed + 175 - 250);
 
   // Unticking clears it.
   await post(`/t/${SLUG}/admin/paid`, [["application_id", appId], ["paid", "0"]], karl);
   admin = await (await get(`/t/${SLUG}/admin`, karl)).text();
-  assert.match(admin, /Outstanding<\/div><div class="stat">€230</);
+  assert.equal(euros(admin, "Outstanding"), owed + 175);
   const csv = await (await get(`/t/${SLUG}/export.csv`, karl)).text();
-  assert.match(csv, /Pack of Legends",Peanuts,230\.00,,active/);
+  assert.match(csv, /Pack of Legends",Peanuts,195\.00,230\.00,425\.00,,active/);
+});
+
+test("members see who's signed up and their squad, without private details", async () => {
+  const anon = await (await get(`/t/${SLUG}`)).text();
+  assert.match(anon, /Sign in<\/a> to see who's signed up/);
+  assert.doesNotMatch(anon, /Player 3/);
+
+  const html = await (await get(`/t/${SLUG}`, people["p4@example.com"])).text();
+  assert.match(html, /Who's signed up \(\d+\)/);
+  assert.match(html, /<span class="squad-mark">X<\/span>/);
+  assert.match(html, /<span class="squad-mark">O<\/span>/);
+  assert.match(html, /Player 6 <span class="tag">C<\/span>/);
+  assert.match(html, /Player Three/);
+  assert.doesNotMatch(html, /p3@example\.com|Gluten|Peanuts/);
 });

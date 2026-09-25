@@ -29,7 +29,7 @@ import {
   type User,
 } from "./db";
 import { sendEmail } from "./email";
-import { currencyOf, describeExtra, extrasTotal, formatMoney, hasPricedItems, selectedItems } from "./extras";
+import { currencyOf, describeExtra, extrasTotal, formatMoney, hasCharges, hasPricedItems, personTotal, selectedItems } from "./extras";
 import { Html, html, page, type Nav } from "./html";
 
 interface Ctx {
@@ -250,7 +250,7 @@ function field(
   </div>`;
 }
 
-function extraInput(f: ExtraField, value: string, error?: string): Html {
+function extraInput(f: ExtraField, value: string, error?: string, t?: Tournament): Html {
   const name = `x_${f.key}`;
   const id = `f_${name}`;
   const label = html`${f.label} ${f.required ? null : html`<span class="req">(optional)</span>`}`;
@@ -262,8 +262,16 @@ function extraInput(f: ExtraField, value: string, error?: string): Html {
   if (f.type === "items") {
     const ticked = new Set(value.split(",").filter(Boolean));
     const currency = f.currency ?? "EUR";
-    const total = selectedItems(f, value).reduce((sum, i) => sum + i.price, 0);
-    return html`<fieldset class="items" data-currency="${currency}"><legend class="field-legend">${label}</legend>${help}
+    const ticket = t?.ticket_price_cents ?? 0;
+    const total = ticket + selectedItems(f, value).reduce((sum, i) => sum + i.price, 0);
+    return html`<fieldset class="items" data-currency="${currency}" data-base="${ticket}"><legend class="field-legend">${label}</legend>
+      ${f.link ? html`<p class="items-link"><a href="${f.link.href}" target="_blank" rel="noopener">${f.link.label} ↗</a></p>` : null}
+      ${help}
+      ${t?.ticket_price_cents != null
+        ? html`<div class="check item fixed"><input type="checkbox" checked disabled aria-label="Ticket (always included)">
+            <span>Ticket<span class="small muted">${t.ticket_includes ? html`<br>${t.ticket_includes}` : null}</span></span>
+            <span class="price">${formatMoney(ticket, currency)}</span></div>`
+        : null}
       ${(f.items ?? []).map(
         (i) => html`<label class="check item"><input type="checkbox" name="${name}" value="${i.key}" data-price="${i.price}"
           ${ticked.has(i.key) ? html`checked` : null}> <span>${i.label}</span><span class="price">${formatMoney(i.price, currency)}</span></label>`,
@@ -337,7 +345,7 @@ async function tournamentPage(c: Ctx, t: Tournament, form?: { input: Application
         ${field("naf_number", "NAF number", { value: profile.naf_number, error: err.naf_number, required: true, inputmode: "numeric" })}
       </fieldset>
       ${fields.length
-        ? html`<fieldset><legend>For this tournament</legend>${fields.map((f) => extraInput(f, extras[f.key] ?? "", err[`x_${f.key}`]))}</fieldset>`
+        ? html`<fieldset><legend>For this tournament</legend>${fields.map((f) => extraInput(f, extras[f.key] ?? "", err[`x_${f.key}`], t))}</fieldset>`
         : null}
       <div class="actions"><button type="submit">${hasApplied ? "Update my sign-up" : c.user ? "Sign up" : "Sign up and email me a link"}</button></div>
     </form>`;
@@ -352,13 +360,14 @@ async function tournamentPage(c: Ctx, t: Tournament, form?: { input: Application
     <p class="muted small"><span class="count">${active.length}</span> signed up · ${squads.length} ${squads.length === 1 ? "squad" : "squads"} of ${t.squad_size}
       ${isCaptainHere || c.admin ? html` · <a href="/t/${t.slug}/draft">Open the draft</a>` : null}</p>
     ${hasApplied
-      ? html`<p class="notice">You're signed up. Change anything below and save.${hasPricedItems(fields)
-          ? html` Your extras come to <strong>${formatMoney(extrasTotal(fields, myExtras), currencyOf(fields))}</strong>${
+      ? html`<p class="notice">You're signed up. Change anything below and save.${hasCharges(t, fields)
+          ? html` Your total is <strong>${formatMoney(personTotal(t, fields, myExtras), currencyOf(fields))}</strong>${
               mine!.paid_cents !== null ? html`, and you've paid` : null}.`
           : null}</p>`
       : null}
     <h2>${hasApplied ? "Your sign-up" : "Sign up"}</h2>
     ${formHtml}
+    ${whoIsSignedUp(c, t, squads, active)}
     ${hasApplied && !isCaptainHere
       ? html`<h2>Can't make it?</h2>
         <form method="post" action="/t/${t.slug}/withdraw" data-confirm="Withdraw from ${t.name}?">
@@ -367,6 +376,32 @@ async function tournamentPage(c: Ctx, t: Tournament, form?: { input: Application
     ${c.admin ? html`<h2>Admin</h2><p><a class="button ghost" href="/t/${t.slug}/admin">Payments and sign-ups</a></p>` : null}`,
     form ? 400 : 200,
   );
+}
+
+/** Names and squads only; emails, extras and dietary details stay with captains and admins. */
+function whoIsSignedUp(c: Ctx, t: Tournament, squads: Squad[], active: Entry[]): Html {
+  if (!c.user) {
+    return html`<h2>Who's signed up</h2>
+      <p class="muted"><a href="/login?next=/t/${t.slug}">Sign in</a> to see who's signed up and the squads.</p>`;
+  }
+  const pool = active.filter((e) => e.squad_id === null);
+  const person = (e: Entry, captain: boolean) =>
+    html`<li><span>${displayName(e)}${captain ? html` <span class="tag">C</span>` : null}</span><span class="small muted">${e.naf_name}</span></li>`;
+  return html`<h2>Who's signed up (${active.length})</h2>
+    ${squads.length
+      ? html`<div class="squads">${squads.map((s) => {
+          const members = active.filter((e) => e.squad_id === s.id);
+          return html`<section class="card squad ${members.some((e) => e.user_id === c.user!.id) ? "mine" : ""}">
+            <h3><span class="squad-mark">${squadName(s)}</span><span class="small count">${members.length}/${t.squad_size}</span></h3>
+            <div class="small muted">Captain: ${s.captain_name || s.captain_email}</div>
+            <ol>${members.map((e) => person(e, e.user_id === s.captain_user_id))}</ol>
+          </section>`;
+        })}</div>`
+      : null}
+    ${pool.length
+      ? html`<section class="card squad"><h3><span>Waiting to be drafted</span><span class="small count">${pool.length}</span></h3>
+          <ol>${pool.map((e) => person(e, false))}</ol></section>`
+      : null}`;
 }
 
 async function applySubmit(c: Ctx, t: Tournament): Promise<Response> {
@@ -523,7 +558,7 @@ async function me(c: Ctx): Promise<Response> {
   const needLogin = requireLogin(c);
   if (needLogin) return needLogin;
   const { results } = await c.env.DB.prepare(
-    `SELECT t.slug, t.name, t.location, t.dates, t.extra_fields, a.extras, a.paid_cents, a.status, a.created_at,
+    `SELECT t.slug, t.name, t.location, t.dates, t.extra_fields, t.ticket_price_cents, a.extras, a.paid_cents, a.status, a.created_at,
             s.name AS squad_name, s.position AS squad_position, cu.name AS captain_name, cu.email AS captain_email,
             (SELECT 1 FROM squads x WHERE x.tournament_id = t.id AND x.captain_user_id = a.user_id) AS is_captain
        FROM applications a
@@ -537,7 +572,7 @@ async function me(c: Ctx): Promise<Response> {
     .bind(c.user!.id)
     .all<{
       slug: string; name: string; location: string | null; dates: string | null; status: string; created_at: string;
-      extra_fields: string; extras: string; paid_cents: number | null;
+      extra_fields: string; ticket_price_cents: number | null; extras: string; paid_cents: number | null;
       squad_name: string | null; squad_position: number | null; captain_name: string | null; captain_email: string | null; is_captain: number | null;
     }>();
 
@@ -555,13 +590,13 @@ async function me(c: Ctx): Promise<Response> {
         state = html`<span class="tag">Drafted</span> ${squadName({ name: r.squad_name, position: r.squad_position })} · captain ${r.captain_name || r.captain_email}`;
       else state = html`<span class="tag">In the pool</span> waiting to be drafted`;
       const fields = extraFields(r as unknown as Tournament);
-      const total = extrasTotal(fields, JSON.parse(r.extras));
+      const total = personTotal(r, fields, JSON.parse(r.extras));
       return html`<a class="card link" href="/t/${r.slug}">
         <div class="meta">${[r.location, r.dates].filter(Boolean).join(" · ")}</div>
         <h3>${r.name}</h3>
         <div class="small">${state}</div>
-        ${hasPricedItems(fields) && r.status === "active"
-          ? html`<div class="small" style="margin-top:6px">Extras: <strong>${formatMoney(total, currencyOf(fields))}</strong>
+        ${hasCharges(r, fields) && r.status === "active"
+          ? html`<div class="small" style="margin-top:6px">Your total: <strong>${formatMoney(total, currencyOf(fields))}</strong>
               ${total === 0 ? null : r.paid_cents !== null ? html`<span class="tag">Paid</span>` : html`<span class="muted">· not paid yet</span>`}</div>`
           : null}
       </a>`;
@@ -780,7 +815,7 @@ async function exportCsv(c: Ctx, t: Tournament): Promise<Response> {
   if (!c.admin && !(await captainSquad(c, t))) return forbidden(c);
   const [squads, entries] = await Promise.all([listSquads(c.env, t.id), listEntries(c.env, t.id)]);
   const fields = extraFields(t);
-  const priced = hasPricedItems(fields);
+  const priced = hasCharges(t, fields);
   const cell = (v: string | number | null | undefined) => {
     let s = String(v ?? "");
     if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; // stop spreadsheets treating text as a formula
@@ -790,7 +825,7 @@ async function exportCsv(c: Ctx, t: Tournament): Promise<Response> {
   const rows = [
     [
       "Squad", "Captain", "Name", "Email", "NAF name", "NAF number", ...fields.map((f) => f.label),
-      ...(priced ? ["Extras total", "Paid"] : []), "Status", "Signed up",
+      ...(priced ? ["Ticket", "Extras total", "Total", "Paid"] : []), "Status", "Signed up",
     ],
     ...entries.map((e) => {
       const s = squadOf(e);
@@ -800,7 +835,14 @@ async function exportCsv(c: Ctx, t: Tournament): Promise<Response> {
         s && s.captain_user_id === e.user_id ? "yes" : "",
         e.name, e.email, e.naf_name, e.naf_number,
         ...fields.map((f) => describeExtra(f, x[f.key])),
-        ...(priced ? [(extrasTotal(fields, x) / 100).toFixed(2), e.paid_cents !== null ? (e.paid_cents / 100).toFixed(2) : ""] : []),
+        ...(priced
+          ? [
+              ((t.ticket_price_cents ?? 0) / 100).toFixed(2),
+              (extrasTotal(fields, x) / 100).toFixed(2),
+              (personTotal(t, fields, x) / 100).toFixed(2),
+              e.paid_cents !== null ? (e.paid_cents / 100).toFixed(2) : "",
+            ]
+          : []),
         e.status, e.created_at,
       ];
     }),
@@ -845,10 +887,12 @@ async function adminPage(c: Ctx, t: Tournament): Promise<Response> {
     .filter((e) => e.status === "active" || e.paid_cents !== null)
     .map((e) => {
       const x: Record<string, string> = JSON.parse(e.extras);
-      return { e, x, total: extrasTotal(fields, x), squad: squads.find((s) => s.id === e.squad_id) };
+      return { e, x, total: personTotal(t, fields, x), squad: squads.find((s) => s.id === e.squad_id) };
     });
   const active = rows.filter((r) => r.e.status === "active");
   const ordered = active.reduce((sum, r) => sum + r.total, 0);
+  const ticketsTotal = active.length * (t.ticket_price_cents ?? 0);
+  const charges = hasCharges(t, fields);
   const received = rows.reduce((sum, r) => sum + (r.e.paid_cents ?? 0), 0);
   const outstanding = active.reduce((sum, r) => sum + Math.max(0, r.total - (r.e.paid_cents ?? 0)), 0);
   const unpaid = active.filter((r) => r.total > 0 && r.e.paid_cents === null).length;
@@ -869,9 +913,10 @@ async function adminPage(c: Ctx, t: Tournament): Promise<Response> {
     <h1>${t.name}</h1>
     <p class="muted small"><a href="/t/${t.slug}/draft">Draft</a> · <a href="/t/${t.slug}/export.csv">Download CSV</a></p>
 
-    ${itemFields.length
+    ${charges
       ? html`<div class="stats">
-          <div><div class="meta">Extras ordered</div><div class="stat">${money(ordered)}</div></div>
+          <div><div class="meta">Owed in total</div><div class="stat">${money(ordered)}</div>
+            <div class="small muted">${money(ticketsTotal)} tickets + ${money(ordered - ticketsTotal)} extras</div></div>
           <div><div class="meta">Paid</div><div class="stat">${money(received)}</div></div>
           <div><div class="meta">Outstanding</div><div class="stat">${money(outstanding)}</div>
             <div class="small muted">${unpaid} ${unpaid === 1 ? "person hasn't" : "people haven't"} paid</div></div>
@@ -884,7 +929,7 @@ async function adminPage(c: Ctx, t: Tournament): Promise<Response> {
       : html`<div class="table-wrap"><table class="pool admin">
         <thead><tr><th>Name</th><th>NAF</th><th>Squad</th>
           ${itemFields.map((f) => html`<th>${f.label}</th>`)}
-          ${itemFields.length ? html`<th class="num">Total</th><th>Paid</th>` : null}
+          ${charges ? html`<th class="num">Total</th><th>Paid</th>` : null}
           ${otherFields.map((f) => html`<th>${f.label}</th>`)}</tr></thead>
         <tbody>
         ${rows.map(({ e, x, total, squad }) => {
@@ -900,7 +945,7 @@ async function adminPage(c: Ctx, t: Tournament): Promise<Response> {
                 ? html`<ul class="plain">${picked.map((i) => html`<li>${i.label} <span class="muted">${money(i.price)}</span></li>`)}</ul>`
                 : html`<span class="muted">—</span>`}</td>`;
             })}
-            ${itemFields.length
+            ${charges
               ? html`<td data-label="Total" class="num"><strong>${money(total)}</strong></td>
                 <td data-label="Paid">
                   <form method="post" action="/t/${t.slug}/admin/paid" class="inline">
@@ -918,11 +963,14 @@ async function adminPage(c: Ctx, t: Tournament): Promise<Response> {
         })}
         </tbody></table></div>`}
 
-    ${tally.length
-      ? html`<h2>Extras to order</h2>
+    ${tally.length || t.ticket_price_cents !== null
+      ? html`<h2>To order</h2>
         <div class="table-wrap"><table>
           <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Subtotal</th></tr></thead>
-          <tbody>${tally.map(({ item, qty }) => html`<tr class="${qty ? "" : "muted"}"><td>${item.label}</td><td class="num">${qty}</td>
+          <tbody>${t.ticket_price_cents !== null
+            ? html`<tr><td><strong>Tickets</strong></td><td class="num">${active.length}</td><td class="num">${money(t.ticket_price_cents)}</td>
+                <td class="num">${money(ticketsTotal)}</td></tr>`
+            : null}${tally.map(({ item, qty }) => html`<tr class="${qty ? "" : "muted"}"><td>${item.label}</td><td class="num">${qty}</td>
             <td class="num">${money(item.price)}</td><td class="num">${money(item.price * qty)}</td></tr>`)}</tbody>
           <tfoot><tr><td colspan="3"><strong>Total</strong></td><td class="num"><strong>${money(ordered)}</strong></td></tr></tfoot>
         </table></div>`
@@ -944,7 +992,7 @@ async function setPaid(c: Ctx, t: Tournament): Promise<Response> {
   const paid = form.getAll("paid").map(String).includes("1");
   const entry = (await listEntries(c.env, t.id)).find((e) => e.application_id === appId);
   if (!entry) return redirect(`/t/${t.slug}/admin`);
-  const total = extrasTotal(extraFields(t), JSON.parse(entry.extras));
+  const total = personTotal(t, extraFields(t), JSON.parse(entry.extras));
   await c.env.DB.prepare(
     paid
       ? "UPDATE applications SET paid_cents = ?, paid_at = datetime('now') WHERE id = ? AND tournament_id = ?"

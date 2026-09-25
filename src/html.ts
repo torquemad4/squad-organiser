@@ -78,7 +78,7 @@ document.addEventListener("change", (e) => {
   if (el.matches("[data-autosubmit]")) el.form.requestSubmit();
   if (el.matches("[data-price]")) {
     const box = el.closest(".items");
-    let cents = 0;
+    let cents = Number(box.dataset.base || 0);
     box.querySelectorAll("[data-price]:checked").forEach((i) => (cents += Number(i.dataset.price)));
     box.querySelector("[data-total]").textContent = new Intl.NumberFormat("en-GB", {
       style: "currency", currency: box.dataset.currency, minimumFractionDigits: cents % 100 ? 2 : 0,

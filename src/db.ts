@@ -35,6 +35,8 @@ export interface ExtraField {
   options?: string[];
   items?: PricedItem[];
   currency?: string;
+  /** Shown at the top of the field, e.g. the organisers' page describing the items. */
+  link?: { href: string; label: string };
 }
 
 export interface Tournament {
@@ -46,6 +48,8 @@ export interface Tournament {
   description: string | null;
   squad_size: number;
   extra_fields: string;
+  ticket_price_cents: number | null;
+  ticket_includes: string | null;
   status: "open" | "closed";
 }
 
@@ -80,8 +84,11 @@ export function extraFields(t: Tournament): ExtraField[] {
   return JSON.parse(t.extra_fields) as ExtraField[];
 }
 
+/** Tactics and Theatrics squads are X, then O, unless the captain renames them. */
+const DEFAULT_SQUAD_NAMES = ["X", "O"];
+
 export function squadName(s: Pick<Squad, "name" | "position">): string {
-  return s.name?.trim() || `Squad ${s.position}`;
+  return s.name?.trim() || DEFAULT_SQUAD_NAMES[s.position - 1] || `Squad ${s.position}`;
 }
 
 export async function findOrCreateUser(env: Env, email: string): Promise<User> {

@@ -192,3 +192,11 @@ tr.withdrawn td { color: var(--muted); }
 tr.muted td { color: var(--muted); }
 tfoot td { border-top: 2px solid var(--ink); border-bottom: 0; }
 table.admin input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--ink); }
+
+.items-link { margin: 0 0 10px; font-size: 14px; }
+.items-link a { font-weight: 700; }
+label.item.fixed, div.item.fixed { cursor: default; }
+div.check.item { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--faint); }
+div.item.fixed input { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); }
+.squad-mark { font-size: 28px; line-height: 1; font-weight: 800; }
+.item .price { font-variant-numeric: tabular-nums; font-weight: 700; }
