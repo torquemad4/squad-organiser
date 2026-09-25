@@ -29,6 +29,7 @@ import {
   type User,
 } from "./db";
 import { sendEmail } from "./email";
+import { currencyOf, describeExtra, extrasTotal, formatMoney, hasPricedItems, selectedItems } from "./extras";
 import { Html, html, page, type Nav } from "./html";
 
 interface Ctx {
@@ -54,6 +55,7 @@ const MESSAGES: Record<string, string> = {
   renamed: "Squad renamed.",
   "squad-removed": "Squad removed; its players are back in the pool.",
   "status-changed": "Tournament status updated.",
+  "paid-updated": "Payment updated.",
   "link-invalid": "That sign-in link has expired or has already been used. Request a new one below.",
 };
 
@@ -97,6 +99,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (path === "/logout" && method === "POST") return logout(c);
   if (path === "/me" && method === "GET") return me(c);
   if (path === "/draft" && method === "GET") return draftIndex(c);
+  if (path === "/admin" && method === "GET") return adminIndex(c);
   if (path === "/__dev/outbox" && method === "GET" && env.EMAIL_MODE === "dev") return devOutbox(c);
 
   const m = path.match(/^\/t\/([a-z0-9-]+)(?:\/(.+))?$/);
@@ -112,6 +115,8 @@ async function route(req: Request, env: Env): Promise<Response> {
     if (sub === "export.csv" && method === "GET") return exportCsv(c, t);
     if (sub.startsWith("draft/") && method === "POST") return draftAction(c, t, sub.slice(6));
     if (sub === "status" && method === "POST") return setStatus(c, t);
+    if (sub === "admin" && method === "GET") return adminPage(c, t);
+    if (sub === "admin/paid" && method === "POST") return setPaid(c, t);
   }
   return notFound(c);
 }
@@ -186,6 +191,13 @@ function readApplication(form: FormData, fields: ExtraField[]): { input: Applica
 
   const extras: Record<string, string> = {};
   for (const f of fields) {
+    if (f.type === "items") {
+      const ticked = new Set(form.getAll(`x_${f.key}`).map(String));
+      const v = (f.items ?? []).filter((i) => ticked.has(i.key)).map((i) => i.key).join(",");
+      if (f.required && !v) errors[`x_${f.key}`] = "Tick at least one.";
+      extras[f.key] = v;
+      continue;
+    }
     let v = str(`x_${f.key}`);
     if (f.type === "checkbox") v = v ? "yes" : "";
     if (f.type === "select" && v && !(f.options ?? []).includes(v)) v = "";
@@ -246,6 +258,17 @@ function extraInput(f: ExtraField, value: string, error?: string): Html {
   const err = error ? html`<p class="help" role="alert"><strong>${error}</strong></p>` : null;
   if (f.type === "checkbox") {
     return html`<div><label class="check"><input type="checkbox" name="${name}" value="yes" ${value ? html`checked` : null}> ${label}</label>${help}${err}</div>`;
+  }
+  if (f.type === "items") {
+    const ticked = new Set(value.split(",").filter(Boolean));
+    const currency = f.currency ?? "EUR";
+    const total = selectedItems(f, value).reduce((sum, i) => sum + i.price, 0);
+    return html`<fieldset class="items" data-currency="${currency}"><legend class="field-legend">${label}</legend>${help}
+      ${(f.items ?? []).map(
+        (i) => html`<label class="check item"><input type="checkbox" name="${name}" value="${i.key}" data-price="${i.price}"
+          ${ticked.has(i.key) ? html`checked` : null}> <span>${i.label}</span><span class="price">${formatMoney(i.price, currency)}</span></label>`,
+      )}
+      <p class="items-total">Your total: <strong data-total>${formatMoney(total, currency)}</strong></p>${err}</fieldset>`;
   }
   if (f.type === "select") {
     return html`<div><label for="${id}">${label}</label>${help}
@@ -328,7 +351,12 @@ async function tournamentPage(c: Ctx, t: Tournament, form?: { input: Application
     ${t.description ? html`<p class="lede">${t.description}</p>` : null}
     <p class="muted small"><span class="count">${active.length}</span> signed up · ${squads.length} ${squads.length === 1 ? "squad" : "squads"} of ${t.squad_size}
       ${isCaptainHere || c.admin ? html` · <a href="/t/${t.slug}/draft">Open the draft</a>` : null}</p>
-    ${hasApplied ? html`<p class="notice">You're signed up. Change anything below and save.</p>` : null}
+    ${hasApplied
+      ? html`<p class="notice">You're signed up. Change anything below and save.${hasPricedItems(fields)
+          ? html` Your extras come to <strong>${formatMoney(extrasTotal(fields, myExtras), currencyOf(fields))}</strong>${
+              mine!.paid_cents !== null ? html`, and you've paid` : null}.`
+          : null}</p>`
+      : null}
     <h2>${hasApplied ? "Your sign-up" : "Sign up"}</h2>
     ${formHtml}
     ${hasApplied && !isCaptainHere
@@ -336,11 +364,7 @@ async function tournamentPage(c: Ctx, t: Tournament, form?: { input: Application
         <form method="post" action="/t/${t.slug}/withdraw" data-confirm="Withdraw from ${t.name}?">
           <button class="ghost">Withdraw</button></form>`
       : null}
-    ${c.admin
-      ? html`<h2>Admin</h2><form method="post" action="/t/${t.slug}/status" class="actions">
-          <input type="hidden" name="status" value="${t.status === "open" ? "closed" : "open"}">
-          <button class="ghost">${t.status === "open" ? "Close sign-ups" : "Reopen sign-ups"}</button></form>`
-      : null}`,
+    ${c.admin ? html`<h2>Admin</h2><p><a class="button ghost" href="/t/${t.slug}/admin">Payments and sign-ups</a></p>` : null}`,
     form ? 400 : 200,
   );
 }
@@ -411,9 +435,9 @@ async function withdraw(c: Ctx, t: Tournament): Promise<Response> {
 async function setStatus(c: Ctx, t: Tournament): Promise<Response> {
   if (!c.admin) return forbidden(c);
   const status = String((await c.req.formData()).get("status"));
-  if (status !== "open" && status !== "closed") return redirect(`/t/${t.slug}`);
+  if (status !== "open" && status !== "closed") return redirect(`/t/${t.slug}/admin`);
   await c.env.DB.prepare("UPDATE tournaments SET status = ? WHERE id = ?").bind(status, t.id).run();
-  return redirect(`/t/${t.slug}?msg=status-changed`);
+  return redirect(`/t/${t.slug}/admin?msg=status-changed`);
 }
 
 // ---------- sign-in ----------
@@ -499,7 +523,7 @@ async function me(c: Ctx): Promise<Response> {
   const needLogin = requireLogin(c);
   if (needLogin) return needLogin;
   const { results } = await c.env.DB.prepare(
-    `SELECT t.slug, t.name, t.location, t.dates, a.status, a.created_at,
+    `SELECT t.slug, t.name, t.location, t.dates, t.extra_fields, a.extras, a.paid_cents, a.status, a.created_at,
             s.name AS squad_name, s.position AS squad_position, cu.name AS captain_name, cu.email AS captain_email,
             (SELECT 1 FROM squads x WHERE x.tournament_id = t.id AND x.captain_user_id = a.user_id) AS is_captain
        FROM applications a
@@ -513,6 +537,7 @@ async function me(c: Ctx): Promise<Response> {
     .bind(c.user!.id)
     .all<{
       slug: string; name: string; location: string | null; dates: string | null; status: string; created_at: string;
+      extra_fields: string; extras: string; paid_cents: number | null;
       squad_name: string | null; squad_position: number | null; captain_name: string | null; captain_email: string | null; is_captain: number | null;
     }>();
 
@@ -529,10 +554,16 @@ async function me(c: Ctx): Promise<Response> {
       else if (r.squad_position)
         state = html`<span class="tag">Drafted</span> ${squadName({ name: r.squad_name, position: r.squad_position })} · captain ${r.captain_name || r.captain_email}`;
       else state = html`<span class="tag">In the pool</span> waiting to be drafted`;
+      const fields = extraFields(r as unknown as Tournament);
+      const total = extrasTotal(fields, JSON.parse(r.extras));
       return html`<a class="card link" href="/t/${r.slug}">
         <div class="meta">${[r.location, r.dates].filter(Boolean).join(" · ")}</div>
         <h3>${r.name}</h3>
         <div class="small">${state}</div>
+        ${hasPricedItems(fields) && r.status === "active"
+          ? html`<div class="small" style="margin-top:6px">Extras: <strong>${formatMoney(total, currencyOf(fields))}</strong>
+              ${total === 0 ? null : r.paid_cents !== null ? html`<span class="tag">Paid</span>` : html`<span class="muted">· not paid yet</span>`}</div>`
+          : null}
       </a>`;
     })}`,
   );
@@ -644,7 +675,11 @@ async function draftPage(c: Ctx, t: Tournament): Promise<Response> {
           return html`<tr>
             <td data-label="Name"><strong>${displayName(e)}</strong><div class="small muted">${e.email}</div></td>
             <td data-label="NAF">${e.naf_name}<div class="small muted">#${e.naf_number}</div></td>
-            ${fields.map((f) => html`<td class="pre small" data-label="${f.label}">${x[f.key] || html`<span class="muted">—</span>`}</td>`)}
+            ${fields.map((f) => {
+              const text = describeExtra(f, x[f.key]);
+              const total = f.type === "items" && text ? ` (${formatMoney(extrasTotal([f], x), f.currency)})` : "";
+              return html`<td class="pre small" data-label="${f.label}">${text ? text + total : html`<span class="muted">—</span>`}</td>`;
+            })}
             <td class="small" data-label="Signed up">${formatDate(e.created_at)}</td>
             <td class="row-actions"><div class="actions">
               ${mySquad && myRoom > 0
@@ -745,6 +780,7 @@ async function exportCsv(c: Ctx, t: Tournament): Promise<Response> {
   if (!c.admin && !(await captainSquad(c, t))) return forbidden(c);
   const [squads, entries] = await Promise.all([listSquads(c.env, t.id), listEntries(c.env, t.id)]);
   const fields = extraFields(t);
+  const priced = hasPricedItems(fields);
   const cell = (v: string | number | null | undefined) => {
     let s = String(v ?? "");
     if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; // stop spreadsheets treating text as a formula
@@ -752,7 +788,10 @@ async function exportCsv(c: Ctx, t: Tournament): Promise<Response> {
   };
   const squadOf = (e: Entry) => squads.find((s) => s.id === e.squad_id);
   const rows = [
-    ["Squad", "Captain", "Name", "Email", "NAF name", "NAF number", ...fields.map((f) => f.label), "Status", "Signed up"],
+    [
+      "Squad", "Captain", "Name", "Email", "NAF name", "NAF number", ...fields.map((f) => f.label),
+      ...(priced ? ["Extras total", "Paid"] : []), "Status", "Signed up",
+    ],
     ...entries.map((e) => {
       const s = squadOf(e);
       const x: Record<string, string> = JSON.parse(e.extras);
@@ -760,7 +799,8 @@ async function exportCsv(c: Ctx, t: Tournament): Promise<Response> {
         s ? squadName(s) : e.status === "active" ? "Pool" : "",
         s && s.captain_user_id === e.user_id ? "yes" : "",
         e.name, e.email, e.naf_name, e.naf_number,
-        ...fields.map((f) => x[f.key] ?? ""),
+        ...fields.map((f) => describeExtra(f, x[f.key])),
+        ...(priced ? [(extrasTotal(fields, x) / 100).toFixed(2), e.paid_cents !== null ? (e.paid_cents / 100).toFixed(2) : ""] : []),
         e.status, e.created_at,
       ];
     }),
@@ -772,6 +812,147 @@ async function exportCsv(c: Ctx, t: Tournament): Promise<Response> {
       "cache-control": "no-store",
     },
   });
+}
+
+// ---------- admin ----------
+
+async function adminIndex(c: Ctx): Promise<Response> {
+  const needLogin = requireLogin(c);
+  if (needLogin) return needLogin;
+  if (!c.admin) return forbidden(c);
+  const tournaments = await listTournaments(c.env);
+  if (tournaments.length === 1) return redirect(`/t/${tournaments[0].slug}/admin`);
+  return page(
+    "Admin",
+    { ...c.nav, active: "admin" },
+    html`<h1>Admin</h1>${tournaments.map((t) => html`<a class="card link" href="/t/${t.slug}/admin"><h3>${t.name}</h3></a>`)}`,
+  );
+}
+
+async function adminPage(c: Ctx, t: Tournament): Promise<Response> {
+  const needLogin = requireLogin(c);
+  if (needLogin) return needLogin;
+  if (!c.admin) return forbidden(c);
+  const [squads, entries] = await Promise.all([listSquads(c.env, t.id), listEntries(c.env, t.id)]);
+  const fields = extraFields(t);
+  const itemFields = fields.filter((f) => f.type === "items");
+  const otherFields = fields.filter((f) => f.type !== "items");
+  const currency = currencyOf(fields);
+  const money = (cents: number) => formatMoney(cents, currency);
+
+  // Everyone signed up, plus anyone who withdrew after paying (they may need a refund).
+  const rows = entries
+    .filter((e) => e.status === "active" || e.paid_cents !== null)
+    .map((e) => {
+      const x: Record<string, string> = JSON.parse(e.extras);
+      return { e, x, total: extrasTotal(fields, x), squad: squads.find((s) => s.id === e.squad_id) };
+    });
+  const active = rows.filter((r) => r.e.status === "active");
+  const ordered = active.reduce((sum, r) => sum + r.total, 0);
+  const received = rows.reduce((sum, r) => sum + (r.e.paid_cents ?? 0), 0);
+  const outstanding = active.reduce((sum, r) => sum + Math.max(0, r.total - (r.e.paid_cents ?? 0)), 0);
+  const unpaid = active.filter((r) => r.total > 0 && r.e.paid_cents === null).length;
+
+  // How many of each item to order from the organisers.
+  const tally = itemFields.flatMap((f) =>
+    (f.items ?? []).map((item) => {
+      const qty = active.filter((r) => selectedItems(f, r.x[f.key]).some((i) => i.key === item.key)).length;
+      return { item, qty };
+    }),
+  );
+
+  return page(
+    `Admin · ${t.name}`,
+    { ...c.nav, active: "admin" },
+    html`${flash(c)}
+    <div class="meta">Admin</div>
+    <h1>${t.name}</h1>
+    <p class="muted small"><a href="/t/${t.slug}/draft">Draft</a> · <a href="/t/${t.slug}/export.csv">Download CSV</a></p>
+
+    ${itemFields.length
+      ? html`<div class="stats">
+          <div><div class="meta">Extras ordered</div><div class="stat">${money(ordered)}</div></div>
+          <div><div class="meta">Paid</div><div class="stat">${money(received)}</div></div>
+          <div><div class="meta">Outstanding</div><div class="stat">${money(outstanding)}</div>
+            <div class="small muted">${unpaid} ${unpaid === 1 ? "person hasn't" : "people haven't"} paid</div></div>
+        </div>`
+      : null}
+
+    <h2>Sign-ups (${active.length})</h2>
+    ${rows.length === 0
+      ? html`<p class="muted">Nobody has signed up yet.</p>`
+      : html`<div class="table-wrap"><table class="pool admin">
+        <thead><tr><th>Name</th><th>NAF</th><th>Squad</th>
+          ${itemFields.map((f) => html`<th>${f.label}</th>`)}
+          ${itemFields.length ? html`<th class="num">Total</th><th>Paid</th>` : null}
+          ${otherFields.map((f) => html`<th>${f.label}</th>`)}</tr></thead>
+        <tbody>
+        ${rows.map(({ e, x, total, squad }) => {
+          const changed = e.paid_cents !== null && e.paid_cents !== total;
+          return html`<tr class="${e.status === "withdrawn" ? "withdrawn" : ""}">
+            <td data-label="Name"><strong>${displayName(e)}</strong><div class="small muted">${e.email}</div>
+              ${e.status === "withdrawn" ? html`<span class="tag">Withdrawn after paying</span>` : null}</td>
+            <td data-label="NAF">${e.naf_name}<div class="small muted">#${e.naf_number}</div></td>
+            <td data-label="Squad" class="small">${squad ? squadName(squad) : e.status === "active" ? html`<span class="muted">Pool</span>` : "—"}</td>
+            ${itemFields.map((f) => {
+              const picked = selectedItems(f, x[f.key]);
+              return html`<td data-label="${f.label}" class="small">${picked.length
+                ? html`<ul class="plain">${picked.map((i) => html`<li>${i.label} <span class="muted">${money(i.price)}</span></li>`)}</ul>`
+                : html`<span class="muted">—</span>`}</td>`;
+            })}
+            ${itemFields.length
+              ? html`<td data-label="Total" class="num"><strong>${money(total)}</strong></td>
+                <td data-label="Paid">
+                  <form method="post" action="/t/${t.slug}/admin/paid" class="inline">
+                    <input type="hidden" name="application_id" value="${e.application_id}">
+                    <input type="hidden" name="paid" value="0">
+                    <label class="check"><input type="checkbox" name="paid" value="1" data-autosubmit
+                      ${e.paid_cents !== null ? html`checked` : null} aria-label="Paid: ${displayName(e)}"> Paid</label>
+                    <noscript><button class="small">Save</button></noscript>
+                  </form>
+                  ${changed ? html`<div class="small"><strong>Paid ${money(e.paid_cents!)}; total is now ${money(total)}</strong></div>` : null}
+                </td>`
+              : null}
+            ${otherFields.map((f) => html`<td data-label="${f.label}" class="pre small">${describeExtra(f, x[f.key]) || html`<span class="muted">—</span>`}</td>`)}
+          </tr>`;
+        })}
+        </tbody></table></div>`}
+
+    ${tally.length
+      ? html`<h2>Extras to order</h2>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Subtotal</th></tr></thead>
+          <tbody>${tally.map(({ item, qty }) => html`<tr class="${qty ? "" : "muted"}"><td>${item.label}</td><td class="num">${qty}</td>
+            <td class="num">${money(item.price)}</td><td class="num">${money(item.price * qty)}</td></tr>`)}</tbody>
+          <tfoot><tr><td colspan="3"><strong>Total</strong></td><td class="num"><strong>${money(ordered)}</strong></td></tr></tfoot>
+        </table></div>`
+      : null}
+
+    <h2>Sign-ups are ${t.status}</h2>
+    <form method="post" action="/t/${t.slug}/status" class="actions">
+      <input type="hidden" name="status" value="${t.status === "open" ? "closed" : "open"}">
+      <button class="ghost">${t.status === "open" ? "Close sign-ups" : "Reopen sign-ups"}</button>
+    </form>`,
+  );
+}
+
+async function setPaid(c: Ctx, t: Tournament): Promise<Response> {
+  if (!c.admin) return forbidden(c);
+  const form = await c.req.formData();
+  const appId = Number(form.get("application_id"));
+  // The hidden "0" is always sent; a ticked box adds "1".
+  const paid = form.getAll("paid").map(String).includes("1");
+  const entry = (await listEntries(c.env, t.id)).find((e) => e.application_id === appId);
+  if (!entry) return redirect(`/t/${t.slug}/admin`);
+  const total = extrasTotal(extraFields(t), JSON.parse(entry.extras));
+  await c.env.DB.prepare(
+    paid
+      ? "UPDATE applications SET paid_cents = ?, paid_at = datetime('now') WHERE id = ? AND tournament_id = ?"
+      : "UPDATE applications SET paid_cents = NULL, paid_at = NULL WHERE id = ? AND tournament_id = ?",
+  )
+    .bind(...(paid ? [total, appId, t.id] : [appId, t.id]))
+    .run();
+  return redirect(`/t/${t.slug}/admin?msg=paid-updated`);
 }
 
 async function devOutbox(c: Ctx): Promise<Response> {

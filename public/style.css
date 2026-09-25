@@ -164,4 +164,31 @@ td.num, th.num { text-align: right; }
     color: var(--muted);
   }
   table.pool td.row-actions { padding-top: 10px; }
+  table.pool td.num { text-align: left; }
 }
+
+/* Priced tick-list */
+fieldset.items { display: block; border: 2px solid var(--ink); padding: 14px 16px; }
+fieldset.items legend.field-legend {
+  font-size: 14px; text-transform: none; letter-spacing: 0; padding: 0 6px; margin: 0 0 0 -6px;
+}
+fieldset.items .help { margin: 0 0 10px; }
+label.item {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+  padding: 8px 0; border-bottom: 1px solid var(--faint); margin: 0; cursor: pointer;
+}
+label.item input { width: 18px; height: 18px; margin: 0; accent-color: var(--ink); }
+label.item .price { font-variant-numeric: tabular-nums; font-weight: 700; }
+.items-total { margin: 12px 0 0; text-align: right; font-size: 15px; }
+.items-total strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+
+/* Admin */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 16px; margin: 24px 0 8px; }
+.stats > div { border: 2px solid var(--ink); padding: 14px 16px; }
+.stat { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+ul.plain { list-style: none; margin: 0; padding: 0; }
+ul.plain li { padding: 1px 0; }
+tr.withdrawn td { color: var(--muted); }
+tr.muted td { color: var(--muted); }
+tfoot td { border-top: 2px solid var(--ink); border-bottom: 0; }
+table.admin input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--ink); }

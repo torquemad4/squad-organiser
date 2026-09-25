@@ -18,13 +18,23 @@ export interface User {
   naf_number: string | null;
 }
 
+export interface PricedItem {
+  key: string;
+  label: string;
+  /** Minor units, e.g. cents. */
+  price: number;
+}
+
 export interface ExtraField {
   key: string;
   label: string;
-  type: "text" | "textarea" | "checkbox" | "select";
+  /** "items" is a priced tick-list; its value is the ticked item keys joined by commas. */
+  type: "text" | "textarea" | "checkbox" | "select" | "items";
   required?: boolean;
   help?: string;
   options?: string[];
+  items?: PricedItem[];
+  currency?: string;
 }
 
 export interface Tournament {
@@ -62,6 +72,8 @@ export interface Entry {
   created_at: string;
   updated_at: string;
   squad_id: number | null;
+  paid_cents: number | null;
+  paid_at: string | null;
 }
 
 export function extraFields(t: Tournament): ExtraField[] {
@@ -100,7 +112,7 @@ export async function listSquads(env: Env, tournamentId: number): Promise<Squad[
 export async function listEntries(env: Env, tournamentId: number): Promise<Entry[]> {
   const { results } = await env.DB.prepare(
     `SELECT a.id AS application_id, a.user_id, u.email, u.name, u.naf_name, u.naf_number,
-            a.extras, a.status, a.created_at, a.updated_at, m.squad_id
+            a.extras, a.status, a.created_at, a.updated_at, m.squad_id, a.paid_cents, a.paid_at
        FROM applications a
        JOIN users u ON u.id = a.user_id
        LEFT JOIN squad_members m ON m.application_id = a.id

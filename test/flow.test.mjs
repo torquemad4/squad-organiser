@@ -68,11 +68,12 @@ async function useLink(token) {
 
 const people = {};
 
-async function signUp(email, name, allergens = "None") {
-  const res = await post(`/t/${SLUG}/apply`, {
-    email, name, naf_name: name.replace(/\s/g, ""), naf_number: String(10000 + Object.keys(people).length),
-    x_extras: "", x_allergens: allergens,
-  });
+async function signUp(email, name, allergens = "None", extras = []) {
+  const res = await post(`/t/${SLUG}/apply`, [
+    ["email", email], ["name", name], ["naf_name", name.replace(/\s/g, "")],
+    ["naf_number", String(10000 + Object.keys(people).length)], ["x_allergens", allergens],
+    ...extras.map((k) => ["x_extras", k]),
+  ]);
   assert.equal(res.status, 200);
   assert.match(await res.text(), /Check your email/);
   const { res: done, cookie } = await useLink(await latestLinkFor(email));
@@ -113,7 +114,7 @@ test("full sign-up and draft flow", async () => {
   assert.match(reused.headers.get("location"), /link-invalid/);
 
   // Five more people: six signed up, so no second captain yet.
-  for (let i = 1; i <= 5; i++) await signUp(`p${i}@example.com`, `Player ${i}`, i === 1 ? "Peanuts" : "None");
+  for (let i = 1; i <= 5; i++) await signUp(`p${i}@example.com`, `Player ${i}`, i === 1 ? "Peanuts" : "None", i === 1 ? ["coin", "pitch"] : []);
   draft = await (await get(`/t/${SLUG}/draft`, karl)).text();
   assert.doesNotMatch(draft, /Make captain/);
   assert.match(draft, /more than 6 people/);
@@ -174,7 +175,8 @@ test("full sign-up and draft flow", async () => {
 
   // CSV export includes squads and extras.
   const csv = await (await get(`/t/${SLUG}/export.csv`, karl)).text();
-  assert.match(csv, /^Squad,Captain,Name,Email,NAF name,NAF number,Optional extras purchase requests,Allergens,Status,Signed up/);
+  assert.match(csv, /^Squad,Captain,Name,Email,NAF name,NAF number,Extras,Allergens,Extras total,Paid,Status,Signed up/);
+  assert.match(csv, /Tournament Coin, World Cup 2027 Neoprene Pitch",Peanuts,55\.00,/);
   assert.match(csv, /Peanuts/);
   assert.match(csv, /Squad 2,yes,Player 6/);
   assert.equal((await get(`/t/${SLUG}/export.csv`, people["p3@example.com"])).status, 403);
@@ -198,4 +200,51 @@ test("login rate limit", async () => {
   for (let i = 0; i < 5; i++) await post("/login", { email: "spam@example.com" });
   const res = await post("/login", { email: "spam@example.com" });
   assert.match(await res.text(), /Too many links/);
+});
+
+test("extras tick-list: totals, admin page and paid tick box", async () => {
+  const p1 = people["p1@example.com"];
+  // Player 1 ticked coin (€15) + pitch (€40) when signing up.
+  const own = await (await get(`/t/${SLUG}`, p1)).text();
+  assert.match(own, /Your extras come to <strong>€55<\/strong>/);
+  assert.match(own, /value="coin" data-price="1500"\s+checked/);
+  assert.match(own, /Pack of Legends<\/span><span class="price">€175/);
+  assert.match(await (await get("/me", p1)).text(), /Extras: <strong>€55<\/strong>[^]*not paid yet/);
+
+  // Unknown item keys are ignored.
+  await post(`/t/${SLUG}/apply`, [["name", "Player 1"], ["naf_name", "P1"], ["naf_number", "1"], ["x_allergens", "Peanuts"],
+    ["x_extras", "coin"], ["x_extras", "pitch"], ["x_extras", "free_beer"]], p1);
+  assert.match(await (await get(`/t/${SLUG}`, p1)).text(), /come to <strong>€55</);
+
+  // Only admins see the admin page.
+  assert.equal((await get(`/t/${SLUG}/admin`, p1)).status, 403);
+  const karl = people[ADMIN];
+  let admin = await (await get(`/t/${SLUG}/admin`, karl)).text();
+  assert.match(admin, /href="\/admin"/, "admins get the Admin tab");
+  assert.match(admin, /Extras ordered<\/div><div class="stat">€55</);
+  assert.match(admin, /Outstanding<\/div><div class="stat">€55</);
+  assert.match(admin, /<td>Tournament Coin<\/td><td class="num">1<\/td>/);
+
+  // Mark Player 1 paid.
+  const appId = admin.match(/name="application_id" value="(\d+)">\s*<input type="hidden" name="paid" value="0">\s*<label class="check"><input type="checkbox" name="paid" value="1" data-autosubmit\s*aria-label="Paid: Player 1"/)[1];
+  const r = await post(`/t/${SLUG}/admin/paid`, [["application_id", appId], ["paid", "0"], ["paid", "1"]], karl);
+  assert.match(r.headers.get("location"), /paid-updated/);
+  admin = await (await get(`/t/${SLUG}/admin`, karl)).text();
+  assert.match(admin, /Paid<\/div><div class="stat">€55</);
+  assert.match(admin, /Outstanding<\/div><div class="stat">€0</);
+  assert.match(await (await get("/me", p1)).text(), /<span class="tag">Paid<\/span>/);
+
+  // Player 1 adds Pack of Legends after paying: admin sees the difference.
+  await post(`/t/${SLUG}/apply`, [["name", "Player 1"], ["naf_name", "P1"], ["naf_number", "1"], ["x_allergens", "Peanuts"],
+    ["x_extras", "coin"], ["x_extras", "pitch"], ["x_extras", "pack_of_legends"]], p1);
+  admin = await (await get(`/t/${SLUG}/admin`, karl)).text();
+  assert.match(admin, /Paid €55; total is now €230/);
+  assert.match(admin, /Outstanding<\/div><div class="stat">€175</);
+
+  // Unticking clears it.
+  await post(`/t/${SLUG}/admin/paid`, [["application_id", appId], ["paid", "0"]], karl);
+  admin = await (await get(`/t/${SLUG}/admin`, karl)).text();
+  assert.match(admin, /Outstanding<\/div><div class="stat">€230</);
+  const csv = await (await get(`/t/${SLUG}/export.csv`, karl)).text();
+  assert.match(csv, /Pack of Legends",Peanuts,230\.00,,active/);
 });

@@ -36,7 +36,7 @@ export interface Nav {
   user: { name: string | null; email: string } | null;
   isCaptain: boolean;
   isAdmin: boolean;
-  active?: "tournaments" | "me" | "draft";
+  active?: "tournaments" | "me" | "draft" | "admin";
 }
 
 export function page(title: string, nav: Nav, body: Html, status = 200): Response {
@@ -59,6 +59,7 @@ export function page(title: string, nav: Nav, body: Html, status = 200): Respons
     ${link("/", "Tournaments", "tournaments")}
     ${nav.user ? link("/me", "My sign-ups", "me") : null}
     ${nav.isCaptain || nav.isAdmin ? link("/draft", "Draft", "draft") : null}
+    ${nav.isAdmin ? link("/admin", "Admin", "admin") : null}
     ${nav.user
       ? html`<form method="post" action="/logout" class="inline"><button class="link">Sign out</button></form>`
       : html`<a href="/login">Sign in</a>`}
@@ -71,6 +72,18 @@ ${body}
 document.addEventListener("submit", (e) => {
   const msg = e.target.dataset.confirm;
   if (msg && !confirm(msg)) e.preventDefault();
+});
+document.addEventListener("change", (e) => {
+  const el = e.target;
+  if (el.matches("[data-autosubmit]")) el.form.requestSubmit();
+  if (el.matches("[data-price]")) {
+    const box = el.closest(".items");
+    let cents = 0;
+    box.querySelectorAll("[data-price]:checked").forEach((i) => (cents += Number(i.dataset.price)));
+    box.querySelector("[data-total]").textContent = new Intl.NumberFormat("en-GB", {
+      style: "currency", currency: box.dataset.currency, minimumFractionDigits: cents % 100 ? 2 : 0,
+    }).format(cents / 100);
+  }
 });
 </script>
 </body>
