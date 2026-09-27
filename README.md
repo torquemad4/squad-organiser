@@ -9,7 +9,8 @@ Live at https://squads.torquemada.uk.
 ## How it works
 
 - **Sign up.** Pick a tournament and fill in your name, email, NAF name and NAF number (always required), plus any questions that tournament adds. If you're not signed in, you get an email link; your sign-up is saved when you click it. You can come back to change your answers or withdraw.
-- **Pool.** Every active sign-up goes into the tournament's pool.
+- **Queue and waitlist.** Everyone not yet in a squad waits in a queue in sign-up order. Once every seat is taken it's shown as a waitlist, and people see their place in line (#1, #2, …). Captains can only draft whoever is next (admins can override), so whoever has waited longest gets the next free place. Withdrawing and rejoining puts you at the back. Drafted players get an email, and when someone in a squad withdraws, their captain is emailed with who's next.
+- **Squad limit.** A tournament can cap its number of squads (the World Cup starts at two). Admins can raise it on the admin page, after which a captain for the next squad can be nominated from the Draft tab.
 - **Captains.** The first address in `ADMIN_EMAILS` is the first captain of every tournament. When more people have signed up than the existing squads can hold (more than 6 for one squad, more than 12 for two, and so on), a captain or admin can make someone from the pool captain of a new squad. The new captain gets an email.
 - **Draft tab.** Captains see a Draft tab. From there they can draft people from the pool into their own squad, release them back to the pool, rename their squad, and download everything as CSV. Picks are first come, first served: a player can only be in one squad, and a captain's own seat is always kept free for them.
 - **Admins** can also release players from any squad, remove squads, and close or reopen sign-ups.

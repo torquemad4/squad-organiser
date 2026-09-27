@@ -20,6 +20,10 @@ import {
   listTournaments,
   pickIntoSquad,
   placeCaptainsInOwnSquads,
+  queueFor,
+  queueLabel,
+  queuePosition,
+  seatsUsed as seatsUsedBy,
   squadName,
   type Entry,
   type Env,
@@ -42,13 +46,16 @@ interface Ctx {
 }
 
 const MESSAGES: Record<string, string> = {
-  applied: "You're in the pool. The captains can now draft you.",
+  applied: "You're signed up.",
   updated: "Your sign-up has been updated.",
   withdrawn: "You've withdrawn from this tournament.",
   "captain-cannot-withdraw": "You're a captain for this tournament. Ask an admin to remove your squad before withdrawing.",
   picked: "Drafted.",
   "pick-failed": "That pick didn't go through: your squad is full or someone else drafted them first.",
-  released: "Returned to the pool.",
+  "pick-not-next": "Picks go in queue order: draft whoever is next in line.",
+  "max-squads-updated": "Squad limit updated.",
+  "max-squads-invalid": "The limit can't be lower than the number of squads that already exist.",
+  released: "Returned to the queue.",
   nominated: "New captain nominated. Their squad is ready to draft.",
   "nominate-not-yet": "There aren't enough people in the pool for another squad yet.",
   "nominate-max": "This tournament already has all its squads.",
@@ -118,6 +125,7 @@ async function route(req: Request, env: Env): Promise<Response> {
     if (sub === "status" && method === "POST") return setStatus(c, t);
     if (sub === "admin" && method === "GET") return adminPage(c, t);
     if (sub === "admin/paid" && method === "POST") return setPaid(c, t);
+    if (sub === "admin/max-squads" && method === "POST") return setMaxSquads(c, t);
   }
   return notFound(c);
 }
@@ -134,7 +142,7 @@ function flash(c: Ctx): Html | null {
   const key = c.url.searchParams.get("msg");
   const text = key ? MESSAGES[key] : null;
   if (!text) return null;
-  const error = /failed|cannot|not-yet|invalid|max/.test(key!);
+  const error = /failed|cannot|not-yet|invalid|nominate-max|not-next/.test(key!);
   return html`<p class="notice ${error ? "error" : ""}" role="status">${text}</p>`;
 }
 
@@ -224,9 +232,10 @@ async function saveApplication(env: Env, user: User, t: Tournament, input: Omit<
       user.id,
     ),
     env.DB.prepare(
-      `INSERT INTO applications (tournament_id, user_id, extras) VALUES (?, ?, ?)
+      `INSERT INTO applications (tournament_id, user_id, extras, queued_at) VALUES (?, ?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now'))
        ON CONFLICT (tournament_id, user_id)
-       DO UPDATE SET extras = excluded.extras, status = 'active', updated_at = datetime('now')`,
+       DO UPDATE SET extras = excluded.extras, status = 'active', updated_at = datetime('now'),
+         queued_at = CASE WHEN applications.status = 'withdrawn' THEN strftime('%Y-%m-%d %H:%M:%f', 'now') ELSE applications.queued_at END`,
     ).bind(t.id, user.id, JSON.stringify(input.extras)),
   ]);
   await ensureInitialCaptain(env, t.id, adminEmails(env)[0]);
@@ -331,6 +340,8 @@ async function tournamentPage(c: Ctx, t: Tournament, form?: { input: Application
   const profile = v?.profile ?? { name: c.user?.name ?? "", naf_name: c.user?.naf_name ?? "", naf_number: c.user?.naf_number ?? "" };
   const extras = v?.extras ?? myExtras;
   const hasApplied = mine?.status === "active";
+  const queue = queueFor(t, squads, entries);
+  const myPlace = mine && hasApplied ? queuePosition(queue, mine.application_id) : null;
 
   const formHtml =
     t.status === "closed"
@@ -348,7 +359,11 @@ async function tournamentPage(c: Ctx, t: Tournament, form?: { input: Application
       ${fields.length
         ? html`<fieldset><legend>For this tournament</legend>${fields.map((f) => extraInput(f, extras[f.key] ?? "", err[`x_${f.key}`], t))}</fieldset>`
         : null}
-      <div class="actions"><button type="submit">${hasApplied ? "Update my sign-up" : c.user ? "Sign up" : "Sign up and email me a link"}</button></div>
+      <div class="actions"><button type="submit">${hasApplied
+        ? "Update my sign-up"
+        : queue.isWaitlist
+          ? c.user ? "Join the waitlist" : "Join the waitlist and email me a link"
+          : c.user ? "Sign up" : "Sign up and email me a link"}</button></div>
     </form>`;
 
   return page(
@@ -360,6 +375,17 @@ async function tournamentPage(c: Ctx, t: Tournament, form?: { input: Application
     ${t.description ? html`<p class="lede">${t.description}</p>` : null}
     <p class="muted small"><span class="count">${active.length}</span> signed up · ${squads.length} ${squads.length === 1 ? "squad" : "squads"} of ${t.squad_size}
       ${isCaptainHere || c.admin ? html` · <a href="/t/${t.slug}/draft">Open the draft</a>` : null}</p>
+    ${queue.isWaitlist && !hasApplied && t.status === "open"
+      ? html`<p class="notice"><strong>All squads are full.</strong> Sign up to join the waitlist: when a place comes up, it goes to
+          whoever has been on the waitlist longest.${queue.waiting.length
+            ? html` There ${queue.waiting.length === 1 ? "is" : "are"} ${queue.waiting.length} ahead of you.`
+            : null}</p>`
+      : null}
+    ${myPlace !== null
+      ? html`<p class="notice"><strong>You're #${myPlace} on the ${queueLabel(queue)}.</strong>${queue.isWaitlist
+          ? " You'll get the next free place in a squad once everyone ahead of you has one; we'll email you when you're in."
+          : " A captain will draft you soon; we'll email you when you're in."}</p>`
+      : null}
     ${hasApplied
       ? html`<p class="notice">You're signed up. Change anything below and save.${hasCharges(t, fields)
           ? html` Your total is <strong>${formatMoney(personTotal(t, fields, myExtras), currencyOf(fields))}</strong>${
@@ -368,7 +394,7 @@ async function tournamentPage(c: Ctx, t: Tournament, form?: { input: Application
       : null}
     <h2>${hasApplied ? "Your sign-up" : "Sign up"}</h2>
     ${formHtml}
-    ${whoIsSignedUp(c, t, squads, active)}
+    ${whoIsSignedUp(c, t, squads, active, queue)}
     ${hasApplied && !isCaptainHere
       ? html`<h2>Can't make it?</h2>
         <form method="post" action="/t/${t.slug}/withdraw" data-confirm="Withdraw from ${t.name}?">
@@ -380,12 +406,11 @@ async function tournamentPage(c: Ctx, t: Tournament, form?: { input: Application
 }
 
 /** Names and squads only; emails, extras and dietary details stay with captains and admins. */
-function whoIsSignedUp(c: Ctx, t: Tournament, squads: Squad[], active: Entry[]): Html {
+function whoIsSignedUp(c: Ctx, t: Tournament, squads: Squad[], active: Entry[], queue: ReturnType<typeof queueFor>): Html {
   if (!c.user) {
     return html`<h2>Who's signed up</h2>
       <p class="muted"><a href="/login?next=/t/${t.slug}">Sign in</a> to see who's signed up and the squads.</p>`;
   }
-  const pool = active.filter((e) => e.squad_id === null);
   const person = (e: Entry, captain: boolean) =>
     html`<li><span>${displayName(e)}${captain ? html` <span class="tag">C</span>` : null}</span><span class="small muted">${e.naf_name}</span></li>`;
   return html`<h2>Who's signed up (${active.length})</h2>
@@ -399,9 +424,11 @@ function whoIsSignedUp(c: Ctx, t: Tournament, squads: Squad[], active: Entry[]):
           </section>`;
         })}</div>`
       : null}
-    ${pool.length
-      ? html`<section class="card squad"><h3><span>Waiting to be drafted</span><span class="small count">${pool.length}</span></h3>
-          <ol>${pool.map((e) => person(e, false))}</ol></section>`
+    ${queue.waiting.length
+      ? html`<section class="card squad"><h3><span>${queue.isWaitlist ? "Waitlist" : "Waiting to be drafted"}</span>
+            <span class="small count">${queue.waiting.length}</span></h3>
+          <ol>${queue.waiting.map((e, i) => html`<li><span><span class="place">#${i + 1}</span> ${displayName(e)}</span>
+            <span class="small muted">${e.naf_name}</span></li>`)}</ol></section>`
       : null}`;
 }
 
@@ -457,6 +484,8 @@ async function withdraw(c: Ctx, t: Tournament): Promise<Response> {
     .bind(t.id, c.user!.id)
     .first();
   if (captain) return redirect(`/t/${t.slug}?msg=captain-cannot-withdraw`);
+  const [squadsBefore, entriesBefore] = await Promise.all([listSquads(c.env, t.id), listEntries(c.env, t.id)]);
+  const leavingSquad = squadsBefore.find((s) => s.id === entriesBefore.find((e) => e.user_id === c.user!.id)?.squad_id);
   await c.env.DB.batch([
     c.env.DB.prepare(
       "DELETE FROM squad_members WHERE application_id = (SELECT id FROM applications WHERE tournament_id = ? AND user_id = ?)",
@@ -465,6 +494,19 @@ async function withdraw(c: Ctx, t: Tournament): Promise<Response> {
       "UPDATE applications SET status = 'withdrawn', updated_at = datetime('now') WHERE tournament_id = ? AND user_id = ?",
     ).bind(t.id, c.user!.id),
   ]);
+  // A seat has opened: tell that squad's captain who has dibs on it.
+  if (leavingSquad) {
+    const queue = queueFor(t, squadsBefore, await listEntries(c.env, t.id));
+    const next = queue.waiting.find((e) => e.user_id !== c.user!.id);
+    await sendEmail(c.env, {
+      to: leavingSquad.captain_email,
+      subject: `A place has opened in ${squadName(leavingSquad)}`,
+      text: `${displayName(c.user!)} has withdrawn from ${squadName(leavingSquad)} for ${t.name}.
+
+${next ? `Next in line is ${displayName(next)}. Draft them here:` : "Nobody is waiting at the moment. The Draft tab is here:"}
+${c.url.origin}/t/${t.slug}/draft`,
+    }).catch((err) => console.error("seat-opened email failed", err));
+  }
   return redirect(`/me?msg=withdrawn`);
 }
 
@@ -559,7 +601,7 @@ async function me(c: Ctx): Promise<Response> {
   const needLogin = requireLogin(c);
   if (needLogin) return needLogin;
   const { results } = await c.env.DB.prepare(
-    `SELECT t.slug, t.name, t.location, t.dates, t.extra_fields, t.ticket_price_cents, a.extras, a.paid_cents, a.status, a.created_at,
+    `SELECT t.slug, t.name, t.location, t.dates, t.extra_fields, t.ticket_price_cents, a.id AS application_id, a.extras, a.paid_cents, a.status, a.created_at,
             s.name AS squad_name, s.position AS squad_position, cu.name AS captain_name, cu.email AS captain_email,
             (SELECT 1 FROM squads x WHERE x.tournament_id = t.id AND x.captain_user_id = a.user_id) AS is_captain
        FROM applications a
@@ -573,9 +615,21 @@ async function me(c: Ctx): Promise<Response> {
     .bind(c.user!.id)
     .all<{
       slug: string; name: string; location: string | null; dates: string | null; status: string; created_at: string;
-      extra_fields: string; ticket_price_cents: number | null; extras: string; paid_cents: number | null;
+      extra_fields: string; ticket_price_cents: number | null; application_id: number; extras: string; paid_cents: number | null;
       squad_name: string | null; squad_position: number | null; captain_name: string | null; captain_email: string | null; is_captain: number | null;
     }>();
+
+  // Where each undrafted sign-up stands in its tournament's queue.
+  const places = new Map<number, { n: number; label: string }>();
+  for (const r of results) {
+    if (r.status !== "active" || r.squad_position || r.is_captain) continue;
+    const t = await getTournament(c.env, r.slug);
+    if (!t) continue;
+    const [squads, entries] = await Promise.all([listSquads(c.env, t.id), listEntries(c.env, t.id)]);
+    const q = queueFor(t, squads, entries);
+    const n = queuePosition(q, r.application_id);
+    if (n !== null) places.set(r.application_id, { n, label: queueLabel(q) });
+  }
 
   return page(
     "My sign-ups",
@@ -589,7 +643,12 @@ async function me(c: Ctx): Promise<Response> {
       else if (r.is_captain) state = html`<span class="tag">Captain</span> of ${squadName({ name: r.squad_name, position: r.squad_position ?? 1 })}`;
       else if (r.squad_position)
         state = html`<span class="tag">Drafted</span> ${squadName({ name: r.squad_name, position: r.squad_position })} · captain ${r.captain_name || r.captain_email}`;
-      else state = html`<span class="tag">In the pool</span> waiting to be drafted`;
+      else {
+        const place = places.get(r.application_id);
+        state = place
+          ? html`<span class="tag">#${place.n} on the ${place.label}</span>`
+          : html`<span class="tag">In the queue</span> waiting to be drafted`;
+      }
       const fields = extraFields(r as unknown as Tournament);
       const total = personTotal(r, fields, JSON.parse(r.extras));
       return html`<a class="card link" href="/t/${r.slug}">
@@ -650,13 +709,11 @@ async function draftPage(c: Ctx, t: Tournament): Promise<Response> {
 
   const fields = extraFields(t);
   const active = entries.filter((e) => e.status === "active");
-  const pool = active.filter((e) => e.squad_id === null);
+  const queue = queueFor(t, squads, entries);
+  const pool = queue.waiting;
   const captainIds = new Set(squads.map((s) => s.captain_user_id));
   const membersOf = (s: Squad) => active.filter((e) => e.squad_id === s.id);
-  const seatsUsed = (s: Squad) => {
-    const members = membersOf(s);
-    return members.length + (members.some((e) => e.user_id === s.captain_user_id) ? 0 : 1);
-  };
+  const seatsUsed = (s: Squad) => seatsUsedBy(s, active);
   const myRoom = mySquad ? t.squad_size - seatsUsed(mySquad) : 0;
   const nominate = canNominate(t, active.length, squads.length);
   const full = atMaxSquads(t, squads.length);
@@ -674,7 +731,7 @@ async function draftPage(c: Ctx, t: Tournament): Promise<Response> {
             ${e.user_id !== s.captain_user_id && (mine || c.admin)
               ? html`<form method="post" action="/t/${t.slug}/draft/release" class="inline">
                   <input type="hidden" name="application_id" value="${e.application_id}">
-                  <button class="small ghost" title="Return to pool">Release</button></form>`
+                  <button class="small ghost" title="Return to the front of the queue">Release</button></form>`
               : null}</li>`,
         )}
       </ol>
@@ -697,24 +754,31 @@ async function draftPage(c: Ctx, t: Tournament): Promise<Response> {
     html`${flash(c)}
     <div class="meta">Draft</div>
     <h1>${t.name}</h1>
-    <p class="muted small"><span class="count">${active.length}</span> signed up · <span class="count">${pool.length}</span> in the pool ·
+    <p class="muted small"><span class="count">${active.length}</span> signed up · <span class="count">${pool.length}</span> waiting ·
       ${squads.length} ${squads.length === 1 ? "squad" : "squads"} of ${t.squad_size} · <a href="/t/${t.slug}/export.csv">Download CSV</a></p>
 
     <h2>Squads</h2>
     <div class="squads">${[...squads].sort((a, b) => Number(b.id === mySquad?.id) - Number(a.id === mySquad?.id)).map(squadCard)}</div>
 
-    <h2>Pool</h2>
+    <h2>${queue.isWaitlist ? "Waitlist" : "Queue"} (${pool.length})</h2>
+    <p class="muted small">In sign-up order. Picks go in this order: ${c.admin ? "captains" : "you"} can only draft whoever is next in line${
+      c.admin ? " (as an admin, you can draft anyone)" : ""}. ${queue.freeSeats} free ${queue.freeSeats === 1 ? "seat" : "seats"} across the squads.</p>
     ${nominate || full
       ? null
       : html`<p class="muted small">Another captain can be nominated once more than ${squads.length * t.squad_size} people have signed up.</p>`}
+    ${full && pool.length
+      ? html`<p class="muted small">The tournament is capped at ${t.max_squads} squads. To start another, raise the limit on the admin page.</p>`
+      : null}
     ${pool.length === 0
-      ? html`<p class="muted">Nobody is waiting in the pool.</p>`
+      ? html`<p class="muted">Nobody is waiting.</p>`
       : html`<div class="table-wrap"><table class="pool">
-        <thead><tr><th>Name</th><th>NAF</th>${fields.map((f) => html`<th>${f.label}</th>`)}<th>Signed up</th><th></th></tr></thead>
+        <thead><tr><th class="num">#</th><th>Name</th><th>NAF</th>${fields.map((f) => html`<th>${f.label}</th>`)}<th>Signed up</th><th></th></tr></thead>
         <tbody>
-        ${pool.map((e) => {
+        ${pool.map((e, i) => {
           const x: Record<string, string> = JSON.parse(e.extras);
+          const canPick = !!mySquad && myRoom > 0 && (i === 0 || c.admin);
           return html`<tr>
+            <td class="num" data-label="Place"><strong>#${i + 1}</strong></td>
             <td data-label="Name"><strong>${displayName(e)}</strong><div class="small muted">${e.email}</div></td>
             <td data-label="NAF">${e.naf_name}<div class="small muted">#${e.naf_number}</div></td>
             ${fields.map((f) => {
@@ -724,7 +788,7 @@ async function draftPage(c: Ctx, t: Tournament): Promise<Response> {
             })}
             <td class="small" data-label="Signed up">${formatDate(e.created_at)}</td>
             <td class="row-actions"><div class="actions">
-              ${mySquad && myRoom > 0
+              ${canPick
                 ? html`<form method="post" action="/t/${t.slug}/draft/pick" class="inline">
                     <input type="hidden" name="application_id" value="${e.application_id}"><button class="small">Draft</button></form>`
                 : null}
@@ -753,7 +817,27 @@ async function draftAction(c: Ctx, t: Tournament, action: string): Promise<Respo
   switch (action) {
     case "pick": {
       if (!mySquad) return forbidden(c);
+      const [squads, entries] = await Promise.all([listSquads(c.env, t.id), listEntries(c.env, t.id)]);
+      const queue = queueFor(t, squads, entries);
+      const picked = queue.waiting.find((e) => e.application_id === appId);
+      // Whoever has waited longest has dibs; admins can override.
+      if (!c.admin && queue.waiting[0]?.application_id !== appId) return back("pick-not-next");
       const ok = await pickIntoSquad(c.env, mySquad.id, appId, c.user!.id);
+      if (ok && picked) {
+        const fields = extraFields(t);
+        const x: Record<string, string> = JSON.parse(picked.extras);
+        await sendEmail(c.env, {
+          to: picked.email,
+          subject: `You're in ${squadName(mySquad)} for ${t.name}`,
+          text: `Hi ${displayName(picked)},
+
+You've been drafted into ${squadName(mySquad)} for ${t.name}. Your captain is ${mySquad.captain_name || mySquad.captain_email}.
+${hasCharges(t, fields) ? `
+Your total is ${formatMoney(personTotal(t, fields, x), currencyOf(fields))}; your captain will tell you how to pay.
+` : ""}
+See your squad: ${c.url.origin}/t/${t.slug}`,
+        }).catch((err) => console.error("drafted email failed", err));
+      }
       return back(ok ? "picked" : "pick-failed");
     }
     case "release": {
@@ -822,6 +906,7 @@ async function exportCsv(c: Ctx, t: Tournament): Promise<Response> {
   if (needLogin) return needLogin;
   if (!c.admin && !(await captainSquad(c, t))) return forbidden(c);
   const [squads, entries] = await Promise.all([listSquads(c.env, t.id), listEntries(c.env, t.id)]);
+  const queue = queueFor(t, squads, entries);
   const fields = extraFields(t);
   const priced = hasCharges(t, fields);
   const cell = (v: string | number | null | undefined) => {
@@ -839,7 +924,7 @@ async function exportCsv(c: Ctx, t: Tournament): Promise<Response> {
       const s = squadOf(e);
       const x: Record<string, string> = JSON.parse(e.extras);
       return [
-        s ? squadName(s) : e.status === "active" ? "Pool" : "",
+        s ? squadName(s) : e.status === "active" ? `${queue.isWaitlist ? "Waitlist" : "Queue"} #${queuePosition(queue, e.application_id)}` : "",
         s && s.captain_user_id === e.user_id ? "yes" : "",
         e.name, e.email, e.naf_name, e.naf_number,
         ...fields.map((f) => describeExtra(f, x[f.key])),
@@ -901,6 +986,7 @@ async function adminPage(c: Ctx, t: Tournament): Promise<Response> {
   const ordered = active.reduce((sum, r) => sum + r.total, 0);
   const ticketsTotal = active.length * (t.ticket_price_cents ?? 0);
   const charges = hasCharges(t, fields);
+  const queue = queueFor(t, squads, entries);
   const received = rows.reduce((sum, r) => sum + (r.e.paid_cents ?? 0), 0);
   const outstanding = active.reduce((sum, r) => sum + Math.max(0, r.total - (r.e.paid_cents ?? 0)), 0);
   const unpaid = active.filter((r) => r.total > 0 && r.e.paid_cents === null).length;
@@ -946,7 +1032,11 @@ async function adminPage(c: Ctx, t: Tournament): Promise<Response> {
             <td data-label="Name"><strong>${displayName(e)}</strong><div class="small muted">${e.email}</div>
               ${e.status === "withdrawn" ? html`<span class="tag">Withdrawn after paying</span>` : null}</td>
             <td data-label="NAF">${e.naf_name}<div class="small muted">#${e.naf_number}</div></td>
-            <td data-label="Squad" class="small">${squad ? squadName(squad) : e.status === "active" ? html`<span class="muted">Pool</span>` : "—"}</td>
+            <td data-label="Squad" class="small">${squad
+              ? squadName(squad)
+              : e.status === "active"
+                ? html`<span class="muted">#${queuePosition(queue, e.application_id)} ${queue.isWaitlist ? "waitlist" : "in queue"}</span>`
+                : "—"}</td>
             ${itemFields.map((f) => {
               const picked = selectedItems(f, x[f.key]);
               return html`<td data-label="${f.label}" class="small">${picked.length
@@ -984,12 +1074,34 @@ async function adminPage(c: Ctx, t: Tournament): Promise<Response> {
         </table></div>`
       : null}
 
+    <h2>Squads</h2>
+    <p class="small muted">${squads.length} of ${t.max_squads ?? "unlimited"} squads · ${queue.freeSeats} free ${queue.freeSeats === 1 ? "seat" : "seats"} ·
+      ${queue.waiting.length} waiting. Raise the limit to let a captain be nominated for another squad from the Draft tab.</p>
+    <form method="post" action="/t/${t.slug}/admin/max-squads" class="actions">
+      <label for="f_max_squads" style="margin:0">Most squads allowed</label>
+      <input id="f_max_squads" name="max_squads" type="number" min="${Math.max(1, squads.length)}" max="20"
+        value="${t.max_squads ?? ""}" placeholder="No limit" style="width:120px">
+      <button class="ghost">Save</button>
+    </form>
+
     <h2>Sign-ups are ${t.status}</h2>
     <form method="post" action="/t/${t.slug}/status" class="actions">
       <input type="hidden" name="status" value="${t.status === "open" ? "closed" : "open"}">
       <button class="ghost">${t.status === "open" ? "Close sign-ups" : "Reopen sign-ups"}</button>
     </form>`,
   );
+}
+
+async function setMaxSquads(c: Ctx, t: Tournament): Promise<Response> {
+  if (!c.admin) return forbidden(c);
+  const raw = String((await c.req.formData()).get("max_squads") ?? "").trim();
+  const value = raw === "" ? null : Number(raw);
+  const squads = await listSquads(c.env, t.id);
+  if (value !== null && (!Number.isInteger(value) || value < Math.max(1, squads.length) || value > 20)) {
+    return redirect(`/t/${t.slug}/admin?msg=max-squads-invalid`);
+  }
+  await c.env.DB.prepare("UPDATE tournaments SET max_squads = ? WHERE id = ?").bind(value, t.id).run();
+  return redirect(`/t/${t.slug}/admin?msg=max-squads-updated`);
 }
 
 async function setPaid(c: Ctx, t: Tournament): Promise<Response> {

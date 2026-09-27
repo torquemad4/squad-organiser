@@ -80,6 +80,7 @@ export interface Entry {
   squad_id: number | null;
   paid_cents: number | null;
   paid_at: string | null;
+  queued_at: string;
 }
 
 export function extraFields(t: Tournament): ExtraField[] {
@@ -121,12 +122,12 @@ export async function listSquads(env: Env, tournamentId: number): Promise<Squad[
 export async function listEntries(env: Env, tournamentId: number): Promise<Entry[]> {
   const { results } = await env.DB.prepare(
     `SELECT a.id AS application_id, a.user_id, u.email, u.name, u.naf_name, u.naf_number,
-            a.extras, a.status, a.created_at, a.updated_at, m.squad_id, a.paid_cents, a.paid_at
+            a.extras, a.status, a.created_at, a.updated_at, m.squad_id, a.paid_cents, a.paid_at, a.queued_at
        FROM applications a
        JOIN users u ON u.id = a.user_id
        LEFT JOIN squad_members m ON m.application_id = a.id
       WHERE a.tournament_id = ?
-      ORDER BY a.created_at, a.id`,
+      ORDER BY a.queued_at, a.id`,
   )
     .bind(tournamentId)
     .all<Entry>();
@@ -191,4 +192,38 @@ export async function pickIntoSquad(env: Env, squadId: number, applicationId: nu
     .bind(byUserId, applicationId, squadId)
     .run();
   return res.meta.changes > 0;
+}
+
+/** Seats a squad has used, counting the captain's seat even before they sign up. */
+export function seatsUsed(s: Squad, active: Entry[]): number {
+  const members = active.filter((e) => e.squad_id === s.id);
+  return members.length + (members.some((e) => e.user_id === s.captain_user_id) ? 0 : 1);
+}
+
+export interface Queue {
+  /** Active sign-ups not in a squad, first in line first. */
+  waiting: Entry[];
+  /** Empty seats across the existing squads. */
+  freeSeats: number;
+  /** True when every seat is taken, so new sign-ups join a waitlist. */
+  isWaitlist: boolean;
+}
+
+export function queueFor(t: Tournament, squads: Squad[], entries: Entry[]): Queue {
+  const active = entries.filter((e) => e.status === "active");
+  const waiting = active
+    .filter((e) => e.squad_id === null)
+    .sort((a, b) => a.queued_at.localeCompare(b.queued_at) || a.application_id - b.application_id);
+  const freeSeats = squads.reduce((sum, s) => sum + Math.max(0, t.squad_size - seatsUsed(s, active)), 0);
+  return { waiting, freeSeats, isWaitlist: squads.length > 0 && freeSeats === 0 };
+}
+
+/** 1-based place in the queue, or null if this person isn't waiting. */
+export function queuePosition(q: Queue, applicationId: number): number | null {
+  const i = q.waiting.findIndex((e) => e.application_id === applicationId);
+  return i === -1 ? null : i + 1;
+}
+
+export function queueLabel(q: Queue): string {
+  return q.isWaitlist ? "waitlist" : "queue to be drafted";
 }

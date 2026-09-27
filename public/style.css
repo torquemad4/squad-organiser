@@ -206,3 +206,5 @@ div.item.fixed input { width: 18px; height: 18px; margin: 0; accent-color: var(-
 .top nav a:hover, .top nav a.active, .top button.link:hover { border-bottom-color: var(--paper); }
 .top button.link { color: var(--paper); }
 .top a:focus-visible, .top button:focus-visible { outline-color: var(--paper); }
+
+.place { font-weight: 800; font-variant-numeric: tabular-nums; margin-right: 4px; }

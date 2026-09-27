@@ -156,7 +156,7 @@ test("full sign-up and draft flow", async () => {
 
   // A drafted player can't be stolen by another captain.
   const steal = await post(`/t/${SLUG}/draft/pick`, { application_id: pool[0] }, p6);
-  assert.match(steal.headers.get("location"), /pick-failed/);
+  assert.match(steal.headers.get("location"), /pick-failed|pick-not-next/);
 
   // Karl releases one; it goes back to the pool and p6 can draft them.
   await post(`/t/${SLUG}/draft/release`, { application_id: pool[0] }, karl);
@@ -172,6 +172,9 @@ test("full sign-up and draft flow", async () => {
   assert.match(drafted, /Drafted/);
   await post(`/t/${SLUG}/withdraw`, {}, people["p2@example.com"]);
   assert.match(await (await get("/me", people["p2@example.com"])).text(), /Withdrawn/);
+  const seatMail = (await (await get("/__dev/outbox")).json()).find((m) => m.to_addr === ADMIN && /^A place has opened in Tactics & Theatrics X/.test(m.subject));
+  assert.ok(seatMail, "captain is told a seat opened");
+  assert.match(seatMail.body, /Player 2 has withdrawn[^]*(Next in line is|Nobody is waiting)/);
 
   // Captains can't withdraw.
   const cw = await post(`/t/${SLUG}/withdraw`, {}, p6);
@@ -273,4 +276,65 @@ test("members see who's signed up and their squad, without private details", asy
   assert.match(html, /Player 6 <span class="tag">C<\/span>/);
   assert.match(html, /Player Three/);
   assert.doesNotMatch(html, /p3@example\.com|Gluten|Peanuts/);
+});
+
+test("waitlist: queue order, dibs for whoever waited longest, rejoining goes to the back", async () => {
+  const karl = people[ADMIN];
+  const p6 = people["p6@example.com"]; // captain of O
+  const queueIds = (html) => [...html.matchAll(/<strong>#(\d+)<\/strong><\/td>\s*<td data-label="Name"><strong>([^<]+)<\/strong>/g)].map((m) => m[2]);
+  const idOf = (html, name) => html.match(new RegExp(`<strong>${name}</strong>[^]*?name="application_id" value="(\\d+)"><button class="small">Draft`))?.[1];
+
+  for (let i = 1; i <= 9; i++) await signUp(`w${i}@example.com`, `Waiter ${i}`);
+
+  // O's captain can only take whoever is first in line.
+  let draft = await (await get(`/t/${SLUG}/draft`, p6)).text();
+  const order = queueIds(draft);
+  assert.ok(order.indexOf("Waiter 1") < order.indexOf("Waiter 2"));
+  assert.equal((draft.match(/<button class="small">Draft<\/button>/g) || []).length, 1, "captains see one Draft button");
+  const w2 = (await (await get(`/t/${SLUG}/admin`, karl)).text()).match(/name="application_id" value="(\d+)">\s*<input type="hidden" name="paid" value="0">\s*<label class="check"><input type="checkbox" name="paid" value="1" data-autosubmit\s*aria-label="Paid: Waiter 2"/)[1];
+  const jump = await post(`/t/${SLUG}/draft/pick`, { application_id: w2 }, p6);
+  assert.match(jump.headers.get("location"), /pick-not-next/);
+
+  // Fill every seat, always taking whoever is next.
+  for (const captain of [p6, karl]) {
+    for (;;) {
+      const page = await (await get(`/t/${SLUG}/draft`, captain)).text();
+      const next = page.match(/name="application_id" value="(\d+)"><button class="small">Draft/);
+      if (!next) break;
+      const r = await post(`/t/${SLUG}/draft/pick`, { application_id: next[1] }, captain);
+      assert.match(r.headers.get("location"), /msg=picked/);
+    }
+  }
+  const outbox = await (await get("/__dev/outbox")).json();
+  assert.ok(outbox.some((m) => m.to_addr === "w1@example.com" && /^You're in Tactics & Theatrics/.test(m.subject)), "drafted player is emailed");
+
+  // Everyone left is on the waitlist, in order.
+  draft = await (await get(`/t/${SLUG}/draft`, karl)).text();
+  assert.match(draft, /<h2>Waitlist \(\d+\)<\/h2>/);
+  const waiting = queueIds(draft);
+  assert.ok(waiting.length >= 2, `expected a waitlist, got ${waiting}`);
+  const [first, second] = waiting;
+  const firstCookie = people[`w${first.split(" ")[1]}@example.com`];
+  assert.match(await (await get(`/t/${SLUG}`, firstCookie)).text(), /You're #1 on the waitlist/);
+  assert.match(await (await get("/me", firstCookie)).text(), /#1 on the waitlist/);
+
+  // A newcomer sees that squads are full.
+  const anon = await (await get(`/t/${SLUG}`)).text();
+  assert.match(anon, /All squads are full/);
+  assert.match(anon, /Join the waitlist and email me a link/);
+
+  // The first in line withdraws and rejoins: they go to the back.
+  await post(`/t/${SLUG}/withdraw`, {}, firstCookie);
+  await post(`/t/${SLUG}/apply`, [["name", first], ["naf_name", "W"], ["naf_number", "1"], ["x_allergens", "None"]], firstCookie);
+  const after = queueIds(await (await get(`/t/${SLUG}/draft`, karl)).text());
+  assert.equal(after[0], second);
+  assert.equal(after[after.length - 1], first);
+
+  // Squad limit: can't go below the squads that exist; raising it allows a new captain.
+  const low = await post(`/t/${SLUG}/admin/max-squads`, { max_squads: "1" }, karl);
+  assert.match(low.headers.get("location"), /max-squads-invalid/);
+  assert.doesNotMatch(await (await get(`/t/${SLUG}/draft`, karl)).text(), /Make captain/);
+  const up = await post(`/t/${SLUG}/admin/max-squads`, { max_squads: "3" }, karl);
+  assert.match(up.headers.get("location"), /max-squads-updated/);
+  assert.match(await (await get(`/t/${SLUG}/draft`, karl)).text(), /Make captain/);
 });
