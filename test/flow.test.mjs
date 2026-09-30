@@ -338,3 +338,29 @@ test("waitlist: queue order, dibs for whoever waited longest, rejoining goes to 
   assert.match(up.headers.get("location"), /max-squads-updated/);
   assert.match(await (await get(`/t/${SLUG}/draft`, karl)).text(), /Make captain/);
 });
+
+test("Home Nations 2027: second tournament with its own queue and no ticket charge", async () => {
+  const home = await (await get("/")).text();
+  assert.match(home, /Home Nations 2027/);
+  assert.match(home, /Loughborough Students&#39; Union · 3–4 July 2027/);
+
+  const p3 = people["p3@example.com"];
+  const r = await post("/t/home-nations-2027/apply", [["name", "Player Three"], ["naf_name", "P3"], ["naf_number", "123"], ["x_allergens", "None"]], p3);
+  assert.match(r.headers.get("location"), /\/t\/home-nations-2027\?msg=applied/);
+  const page = await (await get("/t/home-nations-2027", p3)).text();
+  assert.match(page, /You're #\d+ on the queue to be drafted/);
+  assert.doesNotMatch(page, /Your total is|data-base=/, "no ticket price yet");
+  assert.match(page, /Dietary restrictions/);
+
+  // Karl captains its first squad; the admin page and draft work with no charges.
+  const karl = people[ADMIN];
+  const draft = await (await get("/t/home-nations-2027/draft", karl)).text();
+  assert.match(draft, /Tactics &amp; Theatrics X/);
+  assert.equal((await get("/t/home-nations-2027/admin", karl)).status, 200);
+  const admin = await (await get("/admin", karl)).text();
+  assert.match(admin, /Home Nations 2027/);
+  assert.match(admin, /Blood Bowl World Cup 2027/);
+  // My sign-ups lists both.
+  const me = await (await get("/me", p3)).text();
+  assert.match(me, /Home Nations 2027[^]*Blood Bowl World Cup 2027|Blood Bowl World Cup 2027[^]*Home Nations 2027/);
+});
