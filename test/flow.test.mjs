@@ -352,11 +352,20 @@ test("Home Nations 2027: second tournament with its own queue and no ticket char
   assert.doesNotMatch(page, /Your total is|data-base=/, "no ticket price yet");
   assert.match(page, /Dietary restrictions/);
 
-  // Karl captains its first squad; the admin page and draft work with no charges.
+  // No automatic captain: it's a plain player pool until an admin makes someone captain.
   const karl = people[ADMIN];
-  const draft = await (await get("/t/home-nations-2027/draft", karl)).text();
-  assert.match(draft, /Tactics &amp; Theatrics X/);
+  let draft = await (await get("/t/home-nations-2027/draft", karl)).text();
+  assert.doesNotMatch(draft, /Tactics &amp; Theatrics X/);
+  assert.match(draft, /Make captain/);
+  assert.match(page.replace(/[^]*Who's signed up/, ""), /Waiting to be drafted/);
+  assert.equal((await get("/t/home-nations-2027/draft", p3)).status, 403);
   assert.equal((await get("/t/home-nations-2027/admin", karl)).status, 200);
+  // Making someone captain later still works, and the first squad is X.
+  const appId = draft.match(/draft\/nominate" class="inline"[^]*?name="application_id" value="(\d+)"/)[1];
+  const nom = await post("/t/home-nations-2027/draft/nominate", { application_id: appId }, karl);
+  assert.match(nom.headers.get("location"), /msg=nominated/);
+  draft = await (await get("/t/home-nations-2027/draft", p3)).text();
+  assert.match(draft, /Tactics &amp; Theatrics X/);
   const admin = await (await get("/admin", karl)).text();
   assert.match(admin, /Home Nations 2027/);
   assert.match(admin, /Blood Bowl World Cup 2027/);

@@ -52,6 +52,8 @@ export interface Tournament {
   ticket_includes: string | null;
   /** Most squads allowed; null means no limit. */
   max_squads: number | null;
+  /** 1: the first admin captains the first squad automatically. 0: starts as a player pool. */
+  auto_captain: number;
   status: "open" | "closed";
 }
 
@@ -149,9 +151,10 @@ export async function ensureInitialCaptain(env: Env, tournamentId: number, first
     `INSERT INTO squads (tournament_id, captain_user_id, position)
      SELECT ?, u.id, 1 FROM users u
       WHERE u.email = ?
-        AND NOT EXISTS (SELECT 1 FROM squads WHERE tournament_id = ?)`,
+        AND NOT EXISTS (SELECT 1 FROM squads WHERE tournament_id = ?)
+        AND (SELECT auto_captain FROM tournaments WHERE id = ?) = 1`,
   )
-    .bind(tournamentId, firstAdminEmail, tournamentId)
+    .bind(tournamentId, firstAdminEmail, tournamentId, tournamentId)
     .run();
   await placeCaptainsInOwnSquads(env, tournamentId);
 }
