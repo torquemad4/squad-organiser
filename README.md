@@ -48,3 +48,10 @@ npx wrangler secret put ADMIN_EMAILS   # comma-separated, with the first captain
 ```
 
 After that, `npm run deploy` applies any new migrations and deploys.
+
+## Hosting and access (read from the Cloudflare account, 25 Oct 2026)
+
+- **Worker** `squad-organiser` → https://squads.torquemada.uk · workers.dev off
+- **D1** `squad-organiser` = `1d5f75c8-5200-40ec-a9c1-96253ecc916c`
+- ⚠️ **No Access** — the site is public. No waiver recorded.
+- ⚠️ Team England app hosted on torquemada.uk; the SOP puts Team England apps on englandbb.co.uk. Karl to decide.
